@@ -1,0 +1,67 @@
+diff --git a/services/pkhex/Program.cs b/services/pkhex/Program.cs
+--- a/services/pkhex/Program.cs
++++ b/services/pkhex/Program.cs
+@@ -747,8 +747,7 @@ JsonObject Paste(Game game, JsonObject request)
+             notes.Add("Gigantamax and Dynamax level are not set.");
+         if (set.HiddenPowerType >= 0 && blank.Format < 8)
+             notes.Add("Hidden Power follows the IVs; its type is not set.");
+-        if (set.Friendship != 255)
+-            notes.Add("Friendship is not set.");
++        options["friendship"] = set.Friendship;
+         sets.Add(new JsonObject
+         {
+             ["species"] = name,
+@@ -1014,6 +1013,7 @@ JsonObject Describe(Game game, PKM pk, LegalityAnalysis la)
+         ["trainer_id"] = pk.DisplayTID,
+         ["secret_id"] = pk.DisplaySID,
+         ["nature"] = strings.natures[(int)pk.StatAlignment],
++        ["friendship"] = pk.CurrentFriendship,
+         ["ball"] = strings.balllist[pk.Ball],
+         ["ability"] = game.Context == EntityContext.Gen9a ? "" : strings.abilitylist[pk.Ability],
+         ["held_item"] = pk.HeldItem == 0 ? "" : strings.GetItemStrings(game.Context, game.Versions[0])[pk.HeldItem],
+@@ -1054,7 +1054,7 @@ static byte[] DecryptedParty(PKM pk)
+ 
+ // The offer options a request asks for; a stat array is HP, Atk, Def, SpA, SpD, Spe and -1 leaves a stat alone.
+ record Wish(Nature? Nature, int? Ability, Gender? Gender, int[] IVs, int[] Effort, int? Item, byte? Ball,
+-            byte? Form, ushort[] Moves)
++            byte? Form, byte? Friendship, ushort[] Moves)
+ {
+     static readonly string[] Stats = ["hp", "atk", "def", "spa", "spd", "spe"];
+     static readonly string[] StatNames = ["HP", "Attack", "Defense", "Sp. Atk", "Sp. Def", "Speed"];
+@@ -1073,14 +1073,17 @@ int[] Read(string key)
+             throw new ArgumentException("An IV is at most 31 and an effort value at most 252.");
+         if (Number("nature") is < 0 or > 24)
+             throw new ArgumentException("Unknown nature.");
++        if (Number("friendship") is < 0 or > 255)
++            throw new ArgumentException("Friendship must be between 0 and 255.");
+         ushort[] moves = o?["moves"] is JsonArray list
+             ? [.. list.Select(m => checked((ushort)(int)m!)).Where(m => m != 0).Distinct()] : [];
+         if (moves.Length > 4)
+             throw new ArgumentException("A Pokemon knows at most four moves.");
+         return new Wish(Number("nature") is { } n ? (Nature)n : null, Number("ability"),
+             Number("gender") is { } g ? (Gender)g : null, ivs, effort,
+             Number("held_item"), Number("ball") is { } b ? checked((byte)b) : null,
+-            Number("form") is { } f ? checked((byte)f) : null, moves);
++            Number("form") is { } f ? checked((byte)f) : null,
++            Number("friendship") is { } friendship ? checked((byte)friendship) : null, moves);
+     }
+ 
+     public ushort[] Moveset() => [.. Moves, .. new ushort[4 - Moves.Length]];
+@@ -1127,6 +1130,8 @@ public void Apply(PKM pk)
+             pk.HeldItem = item;
+         if (Ball is { } ball)
+             pk.Ball = ball;
++        if (Friendship is { } friendship)
++            pk.CurrentFriendship = friendship;
+         ApplyEffort(pk);
+         // Gen 3 and 4 raise an EV past 100 (the vitamin cap) only in battle, so the record must have gained
+         // experience since it was met; one point stays below the next level.
+@@ -1178,6 +1183,8 @@ public void ApplyEffort(PKM pk)
+             return $"a {strings.balllist[ball]}";
+         if (Form is { } form && pk.Form != form)
+             return "this form";
++        if (Friendship is { } friendship && pk.CurrentFriendship != friendship)
++            return $"friendship {friendship}";
+         foreach (var move in Moves)
+             if (!pk.HasMove(move))
+                 return $"the move {strings.movelist[move]}";

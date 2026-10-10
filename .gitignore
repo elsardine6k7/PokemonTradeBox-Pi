@@ -1,0 +1,9 @@
+config.json
+logs/
+gifts/
+autostart.log
+__pycache__/
+*.pyc
+received-*
+frlg-sav2.bin
+frlg-party.bin

@@ -1,5 +1,7 @@
 # PokemonTradeBox-Pi
 
+**Current version: v0.2.0**
+
 Touchscreen Raspberry Pi frontend for [pokeldn](https://github.com/Decryptu/pokeldn).
 
 Portable 800×480 Raspberry Pi trade-box UI with touch-friendly Pokémon building, local wireless trades, Mystery Gifts, FireRed/LeafGreen tools, status checks, and optional Labwc autostart.
@@ -8,12 +10,14 @@ Portable 800×480 Raspberry Pi trade-box UI with touch-friendly Pokémon buildin
 
 - Legends Z-A local trades
 - Sword / Shield Link Trades and Mystery Gifts
+- Brilliant Diamond / Shining Pearl local Union Room trades and received-Pokémon history
 - FireRed / LeafGreen Direct Corner trades, Wonder Cards, Wonder News, and read-only save/trainer info
 - touch-first six-Pokémon team builder
 - species / move / held-item / ball pickers
 - large `- / +` controls for level, EVs, quantities, BP, money, and card IDs
 - friendship / happiness selection
 - compact GTK4 layout tuned for 800×480
+- permanent touch-sized vertical scrollbars that do not fade away
 - ESP32 reset/status handling
 - pokeldn / PKHeX status page
 - Labwc autostart helper
@@ -54,7 +58,9 @@ See [docs/setup.md](docs/setup.md) and [docs/hardware.md](docs/hardware.md).
 
 ## Friendship / Happiness
 
-pokeldn v0.20.0 did not yet forward Showdown Happiness/Friendship into the PKHeX builder. This repo includes `patches/pokeldn-friendship.patch`.
+Friendship support was merged upstream in [Decryptu/pokeldn#14](https://github.com/Decryptu/pokeldn/pull/14).
+
+Use a current pokeldn build when possible. If you intentionally stay on pokeldn v0.20.0, this repo keeps the older compatibility patch at `patches/pokeldn-friendship.patch`:
 
 ```bash
 cd ~/pokeldn
@@ -62,7 +68,7 @@ git apply ~/PokemonTradeBox/patches/pokeldn-friendship.patch
 dotnet build -c Release services/pkhex
 ```
 
-The upstream proposal is [Decryptu/pokeldn#14](https://github.com/Decryptu/pokeldn/pull/14).
+The v0.20.0 compatibility patch was originally validated with Sword / Shield. Current upstream pokeldn contains the maintained cross-game implementation.
 
 ## Privacy
 

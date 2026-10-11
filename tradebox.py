@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import gi
 gi.require_version("Gtk", "4.0")
-from gi.repository import Gtk, GLib, Pango
+from gi.repository import Gtk, GLib, Pango, Gdk
 
 import copy
 import json
@@ -18,6 +18,7 @@ from pathlib import Path
 
 HOME = Path.home()
 APP_DIR = Path(__file__).resolve().parent
+APP_VERSION = "0.2.0"
 CONFIG_PATH = Path(
     os.environ.get("POKEMON_TRADEBOX_CONFIG", str(APP_DIR / "config.json"))
 ).expanduser()
@@ -30,6 +31,7 @@ DEFAULT_CONFIG = {
     "trainers": {
         "za": {"ot": "PLAYER", "tid": 0, "sid": 0, "language": 2, "gender": 0},
         "swsh": {"ot": "PLAYER", "tid": 0, "sid": 0, "language": 2, "gender": 0},
+        "bdsp": {"ot": "PLAYER", "tid": 0, "sid": 0, "language": 2, "gender": 0},
         "frlg": {"ot": "PLAYER", "tid": 0, "sid": 0, "language": 2, "gender": 0},
     },
 }
@@ -133,12 +135,66 @@ class TradeBox(Gtk.Application):
         self.touch_window = None
 
     def do_activate(self):
+        self._install_touch_scrollbar_css()
         self.win = Gtk.ApplicationWindow(application=self)
         self.win.set_title("Pokemon Trade Box")
         self.win.set_decorated(False)
         self.win.maximize()
         self.show_home()
         self.win.present()
+
+    def _install_touch_scrollbar_css(self):
+        provider = Gtk.CssProvider()
+        provider.load_from_data(b"""
+            .tradebox-scrollbar {
+                min-width: 30px;
+                min-height: 30px;
+                background-color: rgba(0, 0, 0, 0.08);
+            }
+
+            .tradebox-scrollbar trough {
+                min-width: 30px;
+                background-color: rgba(120, 120, 120, 0.12);
+                border-radius: 9px;
+            }
+
+            .tradebox-scrollbar slider {
+                min-width: 20px;
+                min-height: 76px;
+                margin: 4px;
+                border-radius: 9px;
+                background-color: rgba(95, 95, 95, 0.72);
+            }
+
+            .tradebox-scrollbar slider:hover,
+            .tradebox-scrollbar slider:active {
+                background-color: rgba(70, 70, 70, 0.92);
+            }
+        """)
+
+        display = Gdk.Display.get_default()
+        if display is not None:
+            Gtk.StyleContext.add_provider_for_display(
+                display,
+                provider,
+                Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+            )
+        self._touch_scrollbar_css = provider
+
+    def touch_scrolled_window(self):
+        sc = Gtk.ScrolledWindow()
+        sc.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.ALWAYS)
+        try:
+            sc.set_overlay_scrolling(False)
+            sc.set_kinetic_scrolling(True)
+        except Exception:
+            pass
+
+        bar = sc.get_vscrollbar()
+        if bar is not None:
+            bar.add_css_class("tradebox-scrollbar")
+            bar.set_size_request(30, -1)
+        return sc
 
     # ---------- common UI ----------
 
@@ -195,6 +251,7 @@ class TradeBox(Gtk.Application):
         box = self.page("POKÉMON TRADE BOX")
         box.append(self.button("LEGENDS Z-A", self.show_za))
         box.append(self.button("SWORD / SHIELD", self.show_swsh))
+        box.append(self.button("BRILLIANT DIAMOND / SHINING PEARL", self.show_bdsp))
         box.append(self.button("FIRE RED / LEAF GREEN", self.show_frlg))
         box.append(self.button("SETTINGS", self.show_settings))
         self.win.set_child(box)
@@ -278,6 +335,7 @@ class TradeBox(Gtk.Application):
             str(REPO / "bin/swsh_host.py"),
             str(REPO / "bin/swsh_connect.py"),
             str(REPO / "bin/swsh_gift_host.py"),
+            str(REPO / "bin/bdsp_host.py"),
             str(REPO / "bin/frlg_trade_host.py"),
             str(REPO / "bin/frlg_trade_join.py"),
             str(REPO / "bin/frlg_mg_host.py"),
@@ -340,9 +398,9 @@ class TradeBox(Gtk.Application):
         if not sets:
             raise ValueError("No Pokémon set found.")
 
-        # The stock pokeldn Showdown parser reads Happiness/Friendship but
-        # does not pass it into the PKHeX builder. Preserve explicit values
-        # per set so the patched builder can apply them.
+        # Preserve explicit Happiness/Friendship values for compatibility
+        # with v0.20.0 plus the bundled patch. Newer pokeldn versions also
+        # return this option natively; assigning the same value is harmless.
         friendship_by_set = []
         for block in re.split(r"\n\s*\n", text.strip()):
             block = block.strip()
@@ -401,11 +459,11 @@ class TradeBox(Gtk.Application):
         view.set_monospace(True)
         view.set_vexpand(True)
 
-        scroll = Gtk.ScrolledWindow()
+        scroll = self.touch_scrolled_window()
         scroll.set_vexpand(True)
         try:
             scroll.set_kinetic_scrolling(True)
-            scroll.set_overlay_scrolling(True)
+            scroll.set_overlay_scrolling(False)
         except Exception:
             pass
         scroll.set_child(view)
@@ -510,11 +568,11 @@ class TradeBox(Gtk.Application):
         hint.set_wrap(True)
         outer.append(hint)
 
-        sc = Gtk.ScrolledWindow()
+        sc = self.touch_scrolled_window()
         sc.set_vexpand(True)
         try:
             sc.set_kinetic_scrolling(True)
-            sc.set_overlay_scrolling(True)
+            sc.set_overlay_scrolling(False)
         except Exception:
             pass
 
@@ -838,6 +896,86 @@ class TradeBox(Gtk.Application):
 
         self.launch(cmd, f"Z-A hosting {min(len(infos), 6)} offer(s)")
 
+    # ---------- Brilliant Diamond / Shining Pearl ----------
+
+    def show_bdsp(self, *_):
+        box = self.page("BRILLIANT DIAMOND / SHINING PEARL", self.show_home)
+
+        hint = Gtk.Label(
+            label="Local Union Room trades use pokeldn's BDSP host.",
+            xalign=0,
+        )
+        hint.set_wrap(True)
+        box.append(hint)
+
+        box.append(self.button("LINK TRADE", self.show_bdsp_trade))
+        box.append(self.button("RECEIVED POKÉMON", self.show_bdsp_received))
+        self.win.set_child(box)
+
+    def show_bdsp_trade(self, *_):
+        self.showdown_editor(
+            "BDSP • LINK TRADE",
+            "bdsp",
+            self.host_bdsp_trade,
+            self.show_bdsp,
+        )
+
+    def host_bdsp_trade(self, button, view):
+        text = text_of(view)
+        if not text:
+            self.set_status("Add or paste at least one BDSP Pokémon first.")
+            return
+
+        try:
+            infos = self.showdown_files("bdsp", text)
+        except ValueError as exc:
+            self.set_status(f"Build failed: {exc}")
+            return
+
+        trainer = TRAINERS["bdsp"]
+        received_prefix = APP_DIR / "received-bdsp"
+
+        cmd = [
+            PYTHON, "-u", REPO / "bin/bdsp_host.py",
+            "--keys", KEYS,
+            "--name", str(trainer["ot"]),
+            "--trainer",
+            f"{trainer['ot']}:{trainer['tid']}:{trainer['sid']}",
+            "--language", str(trainer.get("language", 2)),
+            "--complete-trade",
+            "--save-theirs", received_prefix,
+            "--seconds", "900",
+        ]
+
+        for info in infos[:6]:
+            cmd += ["--offer", info["file"]]
+
+        self.launch(
+            cmd,
+            f"BDSP Union Room • {min(len(infos), 6)} offer(s)",
+        )
+
+    def show_bdsp_received(self, *_):
+        box = self.page("BDSP • RECEIVED", self.show_bdsp)
+        paths = sorted(
+            APP_DIR.glob("received-bdsp*.pb8"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+
+        if not paths:
+            box.append(Gtk.Label(label="No received BDSP Pokémon saved yet."))
+        else:
+            sc = self.touch_scrolled_window()
+            sc.set_vexpand(True)
+            col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            for path in paths[:50]:
+                col.append(Gtk.Label(label=path.name, xalign=0))
+            sc.set_child(col)
+            box.append(sc)
+
+        self.win.set_child(box)
+
     # ---------- Sword/Shield menu ----------
 
     def show_swsh(self, *_):
@@ -883,7 +1021,7 @@ class TradeBox(Gtk.Application):
         if not paths:
             box.append(Gtk.Label(label="No received Sword/Shield Pokémon saved yet."))
         else:
-            sc = Gtk.ScrolledWindow()
+            sc = self.touch_scrolled_window()
             sc.set_vexpand(True)
             col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
             for p in paths[:50]:
@@ -915,7 +1053,7 @@ class TradeBox(Gtk.Application):
 
     def show_gift_presets(self, *_):
         box = self.page("MYSTERY GIFT • PRESETS", self.show_swsh_gift)
-        sc = Gtk.ScrolledWindow()
+        sc = self.touch_scrolled_window()
         sc.set_vexpand(True)
         col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         for preset in swgift.PRESETS:
@@ -944,7 +1082,7 @@ class TradeBox(Gtk.Application):
         count = Gtk.Label(xalign=0)
         box.append(count)
 
-        sc = Gtk.ScrolledWindow()
+        sc = self.touch_scrolled_window()
         sc.set_vexpand(True)
         col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
         sc.set_child(col)
@@ -1104,13 +1242,13 @@ class TradeBox(Gtk.Application):
         except Exception:
             pass
 
-        scroll = Gtk.ScrolledWindow()
+        scroll = self.touch_scrolled_window()
         scroll.set_vexpand(True)
         scroll.set_hexpand(True)
-        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.ALWAYS)
         try:
             scroll.set_kinetic_scrolling(True)
-            scroll.set_overlay_scrolling(True)
+            scroll.set_overlay_scrolling(False)
         except Exception:
             pass
         scroll.set_child(listview)
@@ -1583,11 +1721,11 @@ class TradeBox(Gtk.Application):
 
     def build_scroll_page(self, title, back_cb):
         outer = self.page(title, back_cb)
-        sc = Gtk.ScrolledWindow()
+        sc = self.touch_scrolled_window()
         sc.set_vexpand(True)
         try:
             sc.set_kinetic_scrolling(True)
-            sc.set_overlay_scrolling(True)
+            sc.set_overlay_scrolling(False)
         except Exception:
             pass
         col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -1954,7 +2092,7 @@ class TradeBox(Gtk.Application):
         count = Gtk.Label(xalign=0)
         box.append(count)
 
-        sc = Gtk.ScrolledWindow()
+        sc = self.touch_scrolled_window()
         sc.set_vexpand(True)
         col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
         sc.set_child(col)
@@ -2089,7 +2227,7 @@ class TradeBox(Gtk.Application):
         view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
         view.get_buffer().set_text(result.stdout.strip() or "No output.")
 
-        sc = Gtk.ScrolledWindow()
+        sc = self.touch_scrolled_window()
         sc.set_vexpand(True)
         sc.set_child(view)
         box.append(sc)
@@ -2133,7 +2271,10 @@ class TradeBox(Gtk.Application):
                 errors="ignore",
             )
             return (
-                "CurrentFriendship = friendship" in source
+                (
+                    "OriginalTrainerFriendship = friendship" in source
+                    or "CurrentFriendship = friendship" in source
+                )
                 and 'Number("friendship")' in source
             )
         except Exception:
@@ -2166,11 +2307,11 @@ class TradeBox(Gtk.Application):
     def show_settings(self, *_):
         box = self.page("SETTINGS / STATUS", self.show_home)
 
-        sc = Gtk.ScrolledWindow()
+        sc = self.touch_scrolled_window()
         sc.set_vexpand(True)
         try:
             sc.set_kinetic_scrolling(True)
-            sc.set_overlay_scrolling(True)
+            sc.set_overlay_scrolling(False)
         except Exception:
             pass
 
@@ -2185,9 +2326,10 @@ class TradeBox(Gtk.Application):
 
         summary = Gtk.Label(
             label=(
+                f"PokemonTradeBox-Pi: v{APP_VERSION}\n"
                 f"pokeldn: {version}\n"
                 f"PKHeX service: {'OK' if pkhex_ok else 'ERROR'}\n"
-                f"Friendship / Happiness patch: "
+                f"Friendship / Happiness support: "
                 f"{'ACTIVE' if patch_ok else 'NOT DETECTED'}\n"
                 f"ESP32 radio: {'CONNECTED' if radio_ok else 'NOT FOUND'}"
             ),
@@ -2227,6 +2369,8 @@ class TradeBox(Gtk.Application):
                 f"SID {TRAINERS['za']['sid']}\n\n"
                 f"Sword / Shield\n{TRAINERS['swsh']['ot']} • raw TID "
                 f"{TRAINERS['swsh']['tid']} / SID {TRAINERS['swsh']['sid']}\n\n"
+                f"Brilliant Diamond / Shining Pearl\n{TRAINERS['bdsp']['ot']} • raw TID "
+                f"{TRAINERS['bdsp']['tid']} / SID {TRAINERS['bdsp']['sid']}\n\n"
                 f"FireRed / LeafGreen\n{TRAINERS['frlg']['ot']} • TID "
                 f"{TRAINERS['frlg']['tid']} / SID {TRAINERS['frlg']['sid']}\n\n"
                 "Sword Link Trade mode: uncoded\n\n"

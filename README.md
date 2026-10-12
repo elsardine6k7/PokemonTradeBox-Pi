@@ -74,6 +74,27 @@ The v0.20.0 compatibility patch was originally validated with Sword / Shield. Cu
 
 `config.json` is ignored by Git. Never commit `prod.keys`.
 
+## Credits & acknowledgements
+
+PokemonTradeBox-Pi is a touchscreen frontend built around the work of the wider **pokeldn** community. Credit for the local-wireless protocols, ESP32 radio stack, game hosts, event data support, and related reverse-engineering belongs to those upstream projects and contributors.
+
+Special thanks to:
+
+- [Decryptu](https://github.com/Decryptu) for maintaining and developing [pokeldn](https://github.com/Decryptu/pokeldn), which PokemonTradeBox-Pi uses as its backend.
+- [MercuryEnigma](https://github.com/MercuryEnigma) and [tornadus](https://github.com/tornadus) for the original frlg-ldn-trade project lineage, with contributions from [trowgundam](https://github.com/trowgundam).
+- [kinnay](https://github.com/kinnay) for the [LDN library](https://github.com/kinnay/LDN) and NintendoClients research used by pokeldn.
+- [Gr3nSkyDragon](https://github.com/Gr3nSkyDragon) for ESP32-S3 firmware work in pokeldn.
+- [ismailhasannnnnn](https://github.com/ismailhasannnnnn) for Scarlet/Violet Tera Raid hosting and joining work.
+- [easyworld](https://github.com/easyworld) for ESP32 serial reconnect improvements.
+- [capito27](https://github.com/capito27) for Scarlet/Violet event Tera Raid, reward-search, seed-search, size-mark, and NPC partner work in pokeldn.
+- [xCyrusBR](https://github.com/xCyrusBR) for TeraLoop-related Scarlet/Violet raid work.
+- [Matcore962](https://github.com/Matcore962) for Pokémon file and save importing work used by pokeldn's Bank.
+- [GB-Link Team](https://github.com/GB-Link/GB-Link-Switch-LDN) for the custom FireRed/LeafGreen Wonder Cards used by pokeldn.
+- [pret/pokefirered](https://github.com/pret/pokefirered) for the FireRed/LeafGreen decompilation work, including the Switch port.
+- [Project Pokémon](https://github.com/projectpokemon) for the [EventsGallery](https://github.com/projectpokemon/EventsGallery) event data used by pokeldn.
+- [PKHeX](https://github.com/kwsch/PKHeX) and its contributors for the legality and Pokémon data tooling used by pokeldn.
+
+The upstream pokeldn project maintains its own detailed credits list; see its [README](https://github.com/Decryptu/pokeldn#credits) for the authoritative upstream attribution.
 ## License
 
 AGPL-3.0, matching pokeldn.

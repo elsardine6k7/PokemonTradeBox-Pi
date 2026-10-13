@@ -54,6 +54,31 @@ Optional Labwc autostart:
 ./install.sh --autostart
 ```
 
+## Update an existing Pi install
+
+If PokemonTradeBox-Pi was installed with `git clone`, update it directly on the Pi:
+
+```bash
+cd ~/PokemonTradeBox
+git status --short
+git pull --ff-only
+./install.sh
+cat VERSION
+sudo reboot
+```
+
+`config.json`, logs, generated gifts, and received Pokémon files are ignored by Git, so a normal update does not replace them.
+
+If `git status --short` shows changes to tracked project files such as `tradebox.py`, make a backup before updating:
+
+```bash
+cp -a ~/PokemonTradeBox ~/PokemonTradeBox.backup-$(date +%Y%m%d-%H%M%S)
+```
+
+Then either keep/reapply those local changes manually or return the tracked files to the GitHub version before pulling. Avoid using a forced reset unless you are sure you do not need the local edits.
+
+If the existing TradeBox folder was copied manually instead of cloned from GitHub, the easiest upgrade is to clone a fresh copy and move your existing `config.json` into it.
+
 See [docs/setup.md](docs/setup.md) and [docs/hardware.md](docs/hardware.md).
 
 ## Friendship / Happiness

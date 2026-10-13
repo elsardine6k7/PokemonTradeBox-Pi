@@ -18,7 +18,7 @@ from pathlib import Path
 
 HOME = Path.home()
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.3.0"
 CONFIG_PATH = Path(
     os.environ.get("POKEMON_TRADEBOX_CONFIG", str(APP_DIR / "config.json"))
 ).expanduser()
@@ -2006,25 +2006,73 @@ class TradeBox(Gtk.Application):
 
     def show_frlg(self, *_):
         box = self.page("FIRE RED / LEAF GREEN", self.show_home)
+
+        hint = Gtk.Label(
+            label=(
+                "Choose the cartridge that will connect to the Trade Box. "
+                "This controls the FR/LG trade and Mystery Gift host."
+            )
+        )
+        hint.set_wrap(True)
+        box.append(hint)
+
+        box.append(
+            self.button(
+                "FIRE RED",
+                lambda *_: self.select_frlg_version("firered"),
+            )
+        )
+        box.append(
+            self.button(
+                "LEAF GREEN",
+                lambda *_: self.select_frlg_version("leafgreen"),
+            )
+        )
+
+        self.win.set_child(box)
+
+    def _frlg_name(self):
+        return "LeafGreen" if FRLG_VERSION == "leafgreen" else "FireRed"
+
+    def select_frlg_version(self, version):
+        global FRLG_VERSION
+
+        version = str(version).lower()
+        if version not in ("firered", "leafgreen"):
+            self.set_status(f"Unknown FR/LG version: {version}")
+            return
+
+        FRLG_VERSION = version
+        self.show_frlg_menu()
+
+    def show_frlg_menu(self, *_):
+        game_name = self._frlg_name()
         fr = TRAINERS["frlg"]
+
+        box = self.page(game_name.upper(), self.show_frlg)
+
         info = Gtk.Label(
-            label=f"Configured: {FRLG_VERSION.title()} • {fr['ot']} • "
-                  f"TID {fr['tid']} • SID {fr['sid']}"
+            label=(
+                f"Selected: {game_name} • {fr['ot']} • "
+                f"TID {fr['tid']} • SID {fr['sid']}"
+            )
         )
         info.set_wrap(True)
         box.append(info)
-        box.append(self.button("SHOWDOWN TRADE", self.show_frlg_trade))
+
+        box.append(self.button("DIRECT CORNER TRADE", self.show_frlg_trade))
         box.append(self.button("MYSTERY GIFT", self.show_frlg_gifts))
+        box.append(self.button("BUILD YOUR OWN", self.show_frlg_build_menu))
         box.append(self.button("WONDER NEWS", self.show_frlg_news))
         box.append(self.button("READ SAVE / TRAINER INFO", self.show_frlg_read))
         self.win.set_child(box)
 
     def show_frlg_trade(self, *_):
         self.showdown_editor(
-            "FIRE RED • DIRECT CORNER TRADE",
+            f"{self._frlg_name().upper()} • DIRECT CORNER TRADE",
             "frlg",
             self.host_frlg_trade,
-            self.show_frlg,
+            self.show_frlg_menu,
         )
 
     def host_frlg_trade(self, button, view):
@@ -2074,13 +2122,22 @@ class TradeBox(Gtk.Application):
 
         self.launch(
             cmd,
-            f"FireRed Direct Corner • {len(party)} party Pokémon"
+            f"{self._frlg_name()} Direct Corner • {len(party)} party Pokémon"
         )
 
     def show_frlg_gifts(self, *_):
-        box = self.page("FIRE RED • MYSTERY GIFT", self.show_frlg)
+        game_name = self._frlg_name()
+
+        box = self.page(
+            f"{game_name.upper()} • MYSTERY GIFT",
+            self.show_frlg_menu,
+        )
+
         hint = Gtk.Label(
-            label="FireRed: Mystery Gift → Wonder Cards → Friend. Search and tap a gift."
+            label=(
+                f"{game_name}: Mystery Gift → Wonder Cards → Friend. "
+                "Search and tap a gift."
+            )
         )
         hint.set_wrap(True)
         box.append(hint)
@@ -2094,13 +2151,22 @@ class TradeBox(Gtk.Application):
 
         sc = self.touch_scrolled_window()
         sc.set_vexpand(True)
-        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        try:
+            sc.set_kinetic_scrolling(True)
+            sc.set_overlay_scrolling(False)
+        except Exception:
+            pass
+
+        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        col.set_margin_end(2)
         sc.set_child(col)
         box.append(sc)
 
         presets = [
-            p for p in frgift.PRESETS
-            if getattr(p, "args", ()) and p.args[0] == "--gift"
+            preset
+            for preset in frgift.PRESETS
+            if getattr(preset, "args", ())
+            and preset.args[0] == "--gift"
         ]
 
         def render(*_):
@@ -2109,16 +2175,45 @@ class TradeBox(Gtk.Application):
                 nxt = child.get_next_sibling()
                 col.remove(child)
                 child = nxt
+
             words = search.get_text().casefold().split()
+
             shown = [
-                p for p in presets
-                if all(w in f"{p.label} {p.group} {p.summary}".casefold() for w in words)
+                preset
+                for preset in presets
+                if all(
+                    word in (
+                        f"{preset.label} "
+                        f"{preset.group} "
+                        f"{preset.summary}"
+                    ).casefold()
+                    for word in words
+                )
             ]
+
             count.set_text(f"{len(shown)} of {len(presets)} gifts")
+
             for preset in shown:
-                b = Gtk.Button(label=f"{preset.label}\n{preset.group} • {preset.summary}")
-                b.connect("clicked", self.host_frlg_preset, preset.key)
-                col.append(b)
+                text = Gtk.Label(
+                    label=(
+                        f"{preset.label}\n"
+                        f"{preset.group} • {preset.summary}"
+                    ),
+                    xalign=0.5,
+                )
+                text.set_wrap(True)
+                text.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+                text.set_max_width_chars(72)
+                text.set_margin_top(3)
+                text.set_margin_bottom(3)
+                text.set_margin_start(6)
+                text.set_margin_end(6)
+
+                button = Gtk.Button()
+                button.set_hexpand(True)
+                button.set_child(text)
+                button.connect("clicked", self.host_frlg_preset, preset.key)
+                col.append(button)
 
         search.connect("search-changed", render)
         render()
@@ -2132,22 +2227,53 @@ class TradeBox(Gtk.Application):
             "--expect-console", FRLG_VERSION,
             *preset.args,
         ]
-        self.launch(cmd, f"FireRed Mystery Gift • {preset.label}")
+        self.launch(
+            cmd,
+            f"{self._frlg_name()} Mystery Gift • {preset.label}",
+        )
 
     def show_frlg_news(self, *_):
-        box = self.page("FIRE RED • WONDER NEWS", self.show_frlg)
+        game_name = self._frlg_name()
+
+        box = self.page(
+            f"{game_name.upper()} • WONDER NEWS",
+            self.show_frlg_menu,
+        )
+
         hint = Gtk.Label(
-            label="FireRed: Mystery Gift → Wonder News → Friend. "
-                  "Use a different News ID later if you want the same text accepted again."
+            label=(
+                f"{game_name}: Mystery Gift → Wonder News → Friend. "
+                "Use a different News ID later if you want the same text "
+                "accepted again."
+            )
         )
         hint.set_wrap(True)
         box.append(hint)
 
+        sc = self.touch_scrolled_window()
+        sc.set_vexpand(True)
+
+        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+        col.set_margin_end(2)
+
         for preset in frgift.PRESETS:
             if getattr(preset, "args", ()) and preset.args[0] == "--news":
-                b = Gtk.Button(label=f"{preset.label}\n{preset.summary}")
-                b.connect("clicked", self.host_frlg_news, preset.key)
-                box.append(b)
+                text = Gtk.Label(
+                    label=f"{preset.label}\n{preset.summary}",
+                    xalign=0.5,
+                )
+                text.set_wrap(True)
+                text.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+                text.set_max_width_chars(72)
+
+                button = Gtk.Button()
+                button.set_hexpand(True)
+                button.set_child(text)
+                button.connect("clicked", self.host_frlg_news, preset.key)
+                col.append(button)
+
+        sc.set_child(col)
+        box.append(sc)
         self.win.set_child(box)
 
     def host_frlg_news(self, button, key):
@@ -2158,16 +2284,708 @@ class TradeBox(Gtk.Application):
             "--expect-console", FRLG_VERSION,
             *preset.args,
         ]
-        self.launch(cmd, f"FireRed Wonder News • {preset.label}")
+        self.launch(
+            cmd,
+            f"{self._frlg_name()} Wonder News • {preset.label}",
+        )
 
-    def show_frlg_read(self, *_):
-        box = self.page("FIRE RED • READ SAVE", self.show_frlg)
+    # ---------- FR/LG Build Your Own ----------
+
+    def _frlg_resolve(self, kind, value, optional=False):
+        raw = str(value or "").strip()
+
+        if not raw:
+            return 0 if optional else None
+
+        if raw.isdigit():
+            return int(raw)
+
+        needle = (
+            raw.casefold()
+            .replace(" ", "")
+            .replace("-", "")
+            .replace(".", "")
+            .replace("'", "")
+        )
+
+        for number, name in self._name_rows(kind, "frlg"):
+            normalized = (
+                str(name).casefold()
+                .replace(" ", "")
+                .replace("-", "")
+                .replace(".", "")
+                .replace("'", "")
+            )
+            if normalized == needle:
+                return int(number)
+
+        return None
+
+    def multiline_field(self, placeholder="", text=""):
+        app = self
+
+        class MultiField(Gtk.Box):
+            def __init__(self):
+                super().__init__(
+                    orientation=Gtk.Orientation.VERTICAL,
+                    spacing=0,
+                )
+                self.value = str(text)
+                self.button = Gtk.Button()
+                self.button.set_hexpand(True)
+                self.button.connect("clicked", self.edit)
+                self.append(self.button)
+                self.update_label()
+
+            def update_label(self):
+                raw = self.value.strip()
+                if raw:
+                    first = raw.splitlines()[0]
+                    if len(first) > 55:
+                        first = first[:52] + "..."
+                    shown = first
+                else:
+                    shown = placeholder or "Tap to edit"
+
+                lines = len(self.value.splitlines()) if raw else 0
+                suffix = f" • {lines} line{'s' if lines != 1 else ''}" if lines else ""
+                self.button.set_label(f"{shown}{suffix}   ✎")
+
+            def edit(self, *_):
+                app.open_multiline_editor(
+                    self,
+                    placeholder or "EDIT TEXT",
+                    placeholder,
+                )
+
+            def get_text(self):
+                return self.value
+
+            def set_text(self, value):
+                self.value = str(value)
+                self.update_label()
+
+            def grab_focus(self):
+                return self.button.grab_focus()
+
+        return MultiField()
+
+    def open_multiline_editor(self, target, title, placeholder=""):
+        editor = Gtk.ApplicationWindow(application=self)
+        editor.set_title(title)
+        editor.set_transient_for(self.win)
+        editor.set_modal(True)
+        editor.set_decorated(False)
+        editor.maximize()
+        self.touch_window = editor
+
+        root = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=8,
+        )
+        root.set_margin_top(7)
+        root.set_margin_bottom(7)
+        root.set_margin_start(8)
+        root.set_margin_end(8)
+
+        heading = Gtk.Label()
+        heading.set_markup(
+            f'<span size="16000" weight="bold">{title}</span>'
+        )
+        heading.set_wrap(True)
+        root.append(heading)
+
+        view = Gtk.TextView()
+        view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        view.set_monospace(True)
+        view.set_vexpand(True)
+        view.get_buffer().set_text(target.get_text())
+
+        sc = self.touch_scrolled_window()
+        sc.set_vexpand(True)
+        sc.set_child(view)
+        root.append(sc)
+
+        buttons = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=7,
+        )
+
+        cancel = Gtk.Button(label="CANCEL")
+        cancel.set_hexpand(True)
+        cancel.connect("clicked", lambda *_: editor.close())
+        buttons.append(cancel)
+
+        clear = Gtk.Button(label="CLEAR")
+        clear.set_hexpand(True)
+
+        def do_clear(*_):
+            target.set_text("")
+            editor.close()
+
+        clear.connect("clicked", do_clear)
+        buttons.append(clear)
+
+        save = Gtk.Button(label="SAVE")
+        save.set_hexpand(True)
+        save.add_css_class("suggested-action")
+
+        def do_save(*_):
+            target.set_text(text_of(view))
+            editor.close()
+
+        save.connect("clicked", do_save)
+        buttons.append(save)
+
+        root.append(buttons)
+        editor.set_child(root)
+        editor.present()
+
+        def focus_view():
+            try:
+                view.grab_focus()
+            except Exception:
+                pass
+            return False
+
+        GLib.idle_add(focus_view)
+
+    def show_frlg_build_menu(self, *_):
+        game_name = self._frlg_name()
+
+        box = self.page(
+            f"{game_name.upper()} • BUILD YOUR OWN",
+            self.show_frlg_menu,
+        )
+
         hint = Gtk.Label(
-            label="Read-only. FireRed: Mystery Gift → Wonder Cards → Friend. "
-                  "After the dump is written, tap STOP, then VIEW."
+            label=(
+                "Build the payload with pokeldn, then send it through "
+                "the normal FireRed/LeafGreen Mystery Gift connection."
+            ),
+            xalign=0,
         )
         hint.set_wrap(True)
         box.append(hint)
+
+        box.append(self.button("WONDER CARD", self.show_frlg_build_card))
+        box.append(self.button("WONDER NEWS", self.show_frlg_build_news))
+        box.append(self.button("CONSOLE CODE", self.show_frlg_build_code))
+        self.win.set_child(box)
+
+    def _host_frlg_custom(self, state, label, filename):
+        try:
+            gift = frgift.compile(state)
+        except Exception as exc:
+            self.set_status(f"Could not build FR/LG payload: {exc}")
+            return
+
+        path = GIFT_DIR / filename
+
+        try:
+            gifts.save(str(path), gift)
+        except Exception as exc:
+            self.set_status(f"Could not save FR/LG payload: {exc}")
+            return
+
+        cmd = [
+            PYTHON,
+            "-u",
+            REPO / "bin/frlg_mg_host.py",
+            "--live",
+            "--keys",
+            KEYS,
+            "--expect-console",
+            FRLG_VERSION,
+            "--gift-file",
+            path,
+        ]
+
+        self.launch(cmd, f"{self._frlg_name()} • {label}")
+
+    def show_frlg_build_card(self, *_):
+        outer, col = self.build_scroll_page(
+            f"{self._frlg_name().upper()} • BUILD WONDER CARD",
+            self.show_frlg_build_menu,
+        )
+
+        heading = Gtk.Label(label="CARD", xalign=0)
+        heading.add_css_class("heading")
+        col.append(heading)
+
+        title = self.field("Card title", "MYSTERY GIFT")
+        subtitle = self.field(
+            "Card subtitle",
+            "A gift from Pokemon Trade Box",
+        )
+
+        body = [
+            self.field("Card text line 1", ""),
+            self.field("Card text line 2", ""),
+            self.field("Card text line 3", ""),
+            self.field("Card text line 4", ""),
+        ]
+
+        icon = self.autocomplete_field(
+            "species",
+            "Card icon Pokémon",
+            "Pikachu",
+            game="frlg",
+        )
+
+        card_id = self.numeric_field(
+            "Card ID",
+            "1003",
+            1,
+            65535,
+            1,
+        )
+
+        repeatable = Gtk.CheckButton(label="Can be received again")
+        shareable = Gtk.CheckButton(
+            label="Player can share the Wonder Card"
+        )
+
+        giver_labels = [
+            f"{who} • {where}"
+            for _key, who, where, *_rest in frgift.GIVERS
+        ]
+        giver = Gtk.DropDown.new_from_strings(giver_labels)
+        giver.set_selected(0)
+
+        col.append(self.labeled("Title", title))
+        col.append(self.labeled("Subtitle", subtitle))
+
+        for n, field in enumerate(body, 1):
+            col.append(self.labeled(f"Text {n}", field))
+
+        col.append(self.labeled("Icon", icon))
+        col.append(self.labeled("Card ID", card_id))
+        col.append(repeatable)
+        col.append(shareable)
+        col.append(self.labeled("Giver", giver))
+
+        action_heading = Gtk.Label(label="WHAT HAPPENS", xalign=0)
+        action_heading.add_css_class("heading")
+        col.append(action_heading)
+
+        action_names = [
+            "Give Pokémon",
+            "Give Item",
+            "Give Egg",
+            "Start Wild Battle",
+            "Show Message",
+        ]
+
+        action = Gtk.DropDown.new_from_strings(action_names)
+        action.set_selected(0)
+        col.append(self.labeled("Action", action))
+
+        note = Gtk.Label(
+            label=(
+                "Only the fields needed by the selected action are used. "
+                "The others can be left alone."
+            ),
+            xalign=0,
+        )
+        note.set_wrap(True)
+        col.append(note)
+
+        species = self.autocomplete_field(
+            "species",
+            "Pokémon species",
+            "Pikachu",
+            game="frlg",
+        )
+
+        level = self.numeric_field(
+            "Level",
+            "5",
+            1,
+            100,
+            1,
+        )
+
+        held_item = self.autocomplete_field(
+            "items",
+            "Held item (optional)",
+            "",
+            game="frlg",
+        )
+
+        moves = []
+        for n in range(4):
+            move = self.autocomplete_field(
+                "moves",
+                f"Move {n + 1} (optional)",
+                "",
+                game="frlg",
+            )
+            moves.append(move)
+
+        gift_item = self.autocomplete_field(
+            "items",
+            "Item to give",
+            "Master Ball",
+            game="frlg",
+        )
+
+        quantity = self.numeric_field(
+            "Quantity",
+            "1",
+            1,
+            999,
+            1,
+        )
+
+        message = self.field(
+            "Message",
+            "{PLAYER} received a gift!",
+        )
+
+        after_message = self.field(
+            "Message after gift (optional)",
+            "{PLAYER} received a gift!",
+        )
+
+        col.append(self.labeled("Pokémon", species))
+        col.append(self.labeled("Level", level))
+        col.append(self.labeled("Held item", held_item))
+
+        for n, move in enumerate(moves, 1):
+            col.append(self.labeled(f"Move {n}", move))
+
+        col.append(self.labeled("Gift item", gift_item))
+        col.append(self.labeled("Quantity", quantity))
+        col.append(self.labeled("Message", message))
+        col.append(self.labeled("After", after_message))
+
+        send = Gtk.Button(label="BUILD & SEND WONDER CARD")
+        send.add_css_class("suggested-action")
+
+        def build_and_send(*_):
+            try:
+                icon_id = self._frlg_resolve(
+                    "species",
+                    icon.get_text(),
+                )
+                if icon_id is None:
+                    raise ValueError("Choose a valid card icon Pokémon.")
+
+                state = frgift.blank()
+                state["kind"] = "card"
+
+                giver_index = int(giver.get_selected())
+                state["giver"] = frgift.GIVERS[giver_index][0]
+
+                state["card"] = {
+                    "title": title.get_text().strip() or "MYSTERY GIFT",
+                    "subtitle": subtitle.get_text().strip(),
+                    "body": [
+                        field.get_text().strip()
+                        for field in body
+                    ],
+                    "icon": icon_id,
+                    "flag_id": int(card_id.get_text()),
+                    "repeatable": repeatable.get_active(),
+                    "shareable": shareable.get_active(),
+                }
+
+                selected = int(action.get_selected())
+
+                species_id = self._frlg_resolve(
+                    "species",
+                    species.get_text(),
+                )
+
+                held_id = self._frlg_resolve(
+                    "items",
+                    held_item.get_text(),
+                    optional=True,
+                )
+
+                move_ids = [
+                    self._frlg_resolve(
+                        "moves",
+                        move.get_text(),
+                        optional=True,
+                    )
+                    for move in moves
+                ]
+
+                if any(move_id is None for move_id in move_ids):
+                    raise ValueError("One of the selected moves is not valid.")
+
+                if selected == 0:
+                    if species_id is None:
+                        raise ValueError("Choose a valid Pokémon species.")
+
+                    step = {
+                        "type": "pokemon",
+                        "species": species_id,
+                        "level": int(level.get_text()),
+                        "item": held_id or 0,
+                        "moves": move_ids,
+                    }
+
+                elif selected == 1:
+                    item_id = self._frlg_resolve(
+                        "items",
+                        gift_item.get_text(),
+                    )
+                    if item_id is None:
+                        raise ValueError("Choose a valid gift item.")
+
+                    step = {
+                        "type": "item",
+                        "item": item_id,
+                        "quantity": int(quantity.get_text()),
+                    }
+
+                elif selected == 2:
+                    if species_id is None:
+                        raise ValueError("Choose a valid egg species.")
+
+                    step = {
+                        "type": "egg",
+                        "species": species_id,
+                        "moves": move_ids,
+                    }
+
+                elif selected == 3:
+                    if species_id is None:
+                        raise ValueError("Choose a valid battle species.")
+
+                    step = {
+                        "type": "battle",
+                        "species": species_id,
+                        "level": int(level.get_text()),
+                        "item": held_id or 0,
+                    }
+
+                else:
+                    text = message.get_text().strip()
+                    if not text:
+                        raise ValueError("Enter a message.")
+
+                    step = {
+                        "type": "message",
+                        "text": text,
+                    }
+
+                steps = [step]
+
+                extra = after_message.get_text().strip()
+                if extra and selected != 4:
+                    steps.append(
+                        {
+                            "type": "message",
+                            "text": extra,
+                        }
+                    )
+
+                state["steps"] = steps
+
+            except Exception as exc:
+                self.set_status(f"Wonder Card setup error: {exc}")
+                return
+
+            self._host_frlg_custom(
+                state,
+                "Custom Wonder Card",
+                "current-frlg-wonder-card.pokegift",
+            )
+
+        send.connect("clicked", build_and_send)
+        col.append(send)
+
+    def show_frlg_build_news(self, *_):
+        outer, col = self.build_scroll_page(
+            f"{self._frlg_name().upper()} • BUILD WONDER NEWS",
+            self.show_frlg_build_menu,
+        )
+
+        hint = Gtk.Label(
+            label=(
+                "Wonder News appears immediately on the Wonder News screen. "
+                "Change the News ID when sending revised news."
+            ),
+            xalign=0,
+        )
+        hint.set_wrap(True)
+        col.append(hint)
+
+        title = self.field(
+            "News title",
+            "POKEMON TRADE BOX NEWS",
+        )
+
+        news_id = self.numeric_field(
+            "News ID",
+            "1",
+            1,
+            65535,
+            1,
+        )
+
+        col.append(self.labeled("Title", title))
+        col.append(self.labeled("News ID", news_id))
+
+        lines = []
+        defaults = [
+            "Hello from Pokemon Trade Box!",
+            "", "", "", "", "", "", "", "", "",
+        ]
+
+        for n in range(10):
+            field = self.field(
+                f"News line {n + 1}",
+                defaults[n],
+            )
+            lines.append(field)
+            col.append(self.labeled(f"Line {n + 1}", field))
+
+        send = Gtk.Button(label="BUILD & SEND WONDER NEWS")
+        send.add_css_class("suggested-action")
+
+        def build_and_send(*_):
+            state = frgift.blank()
+            state["kind"] = "news"
+            state["news"] = {
+                "title": title.get_text().strip() or "POKEMON NEWS",
+                "lines": [
+                    field.get_text().strip()
+                    for field in lines
+                ],
+                "id": int(news_id.get_text()),
+            }
+
+            self._host_frlg_custom(
+                state,
+                "Custom Wonder News",
+                "current-frlg-wonder-news.pokegift",
+            )
+
+        send.connect("clicked", build_and_send)
+        col.append(send)
+
+    def show_frlg_build_code(self, *_):
+        outer, col = self.build_scroll_page(
+            f"{self._frlg_name().upper()} • CONSOLE CODE",
+            self.show_frlg_build_menu,
+        )
+
+        warning = Gtk.Label(
+            label=(
+                "ADVANCED: Console Code runs ARM code inside the Mystery Gift "
+                "session. Use code you understand. Assembly requires the GNU "
+                "Arm toolchain; a prebuilt .bin can be used instead."
+            ),
+            xalign=0,
+        )
+        warning.set_wrap(True)
+        col.append(warning)
+
+        blank = frgift.blank()
+        default_code = blank.get("code", {})
+
+        assembly = self.multiline_field(
+            "ASSEMBLY SOURCE",
+            default_code.get("source", ""),
+        )
+
+        binary = self.field(
+            "Path to prebuilt .bin (optional)",
+            "",
+        )
+
+        target_keys = [""] + list(frgift.CARTRIDGES.keys())
+        target_labels = ["Any cartridge"] + [
+            frgift.CARTRIDGES[key]
+            for key in frgift.CARTRIDGES
+        ]
+
+        target = Gtk.DropDown.new_from_strings(target_labels)
+        target.set_selected(0)
+
+        expect = self.field(
+            "Expected answer (optional; decimal or 0x...)",
+            "",
+        )
+
+        dump_size = self.field(
+            "Bytes sent back (optional)",
+            "",
+        )
+
+        col.append(self.labeled("Assembly", assembly))
+        col.append(self.labeled(".bin path", binary))
+        col.append(self.labeled("Built for", target))
+        col.append(self.labeled("Expected", expect))
+        col.append(self.labeled("Return bytes", dump_size))
+
+        note = Gtk.Label(
+            label=(
+                '"Any cartridge" is only appropriate for code that does not '
+                "depend on cartridge-specific ROM addresses."
+            ),
+            xalign=0,
+        )
+        note.set_wrap(True)
+        col.append(note)
+
+        send = Gtk.Button(label="CHECK, BUILD & SEND CODE")
+        send.add_css_class("suggested-action")
+
+        def build_and_send(*_):
+            binary_path = binary.get_text().strip()
+            if binary_path:
+                binary_path = str(Path(binary_path).expanduser())
+
+            index = int(target.get_selected())
+            build = (
+                target_keys[index]
+                if 0 <= index < len(target_keys)
+                else ""
+            )
+
+            state = frgift.blank()
+            state["kind"] = "code"
+            state["code"] = {
+                "source": assembly.get_text(),
+                "binary": binary_path,
+                "expect": expect.get_text().strip(),
+                "dump_size": dump_size.get_text().strip(),
+                "build": build,
+            }
+
+            self._host_frlg_custom(
+                state,
+                "Custom Console Code",
+                "current-frlg-console-code.pokegift",
+            )
+
+        send.connect("clicked", build_and_send)
+        col.append(send)
+
+    def show_frlg_read(self, *_):
+        game_name = self._frlg_name()
+
+        box = self.page(
+            f"{game_name.upper()} • READ SAVE",
+            self.show_frlg_menu,
+        )
+
+        hint = Gtk.Label(
+            label=(
+                f"Read-only. {game_name}: Mystery Gift → "
+                "Wonder Cards → Friend. After the dump is written, "
+                "tap STOP, then VIEW."
+            )
+        )
+        hint.set_wrap(True)
+        box.append(hint)
+
         box.append(self.button("READ TRAINER INFO", self.start_frlg_read_trainer))
         box.append(self.button("VIEW TRAINER INFO", self.view_frlg_trainer))
         box.append(self.button("READ SAVED PARTY", self.start_frlg_read_party))
@@ -2185,7 +3003,7 @@ class TradeBox(Gtk.Application):
             "--dump-size", "64",
             "--dump-file", path,
         ]
-        self.launch(cmd, "FireRed reading trainer info")
+        self.launch(cmd, f"{self._frlg_name()} reading trainer info")
 
     def start_frlg_read_party(self, *_):
         path = APP_DIR / "frlg-party.bin"
@@ -2199,7 +3017,7 @@ class TradeBox(Gtk.Application):
             "--dump-size", "608",
             "--dump-file", path,
         ]
-        self.launch(cmd, "FireRed reading saved party")
+        self.launch(cmd, f"{self._frlg_name()} reading saved party")
 
     def _show_frlg_dump(self, title, path, block, offset=None):
         box = self.page(title, self.show_frlg_read)
@@ -2235,14 +3053,14 @@ class TradeBox(Gtk.Application):
 
     def view_frlg_trainer(self, *_):
         self._show_frlg_dump(
-            "FIRE RED • TRAINER INFO",
+            f"{self._frlg_name().upper()} • TRAINER INFO",
             APP_DIR / "frlg-sav2.bin",
             "sav2",
         )
 
     def view_frlg_party(self, *_):
         self._show_frlg_dump(
-            "FIRE RED • SAVED PARTY",
+            f"{self._frlg_name().upper()} • SAVED PARTY",
             APP_DIR / "frlg-party.bin",
             "sav1",
             "0x34",

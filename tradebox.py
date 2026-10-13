@@ -133,6 +133,10 @@ class TradeBox(Gtk.Application):
         self.current_label = "Idle"
         self.name_cache = {}
         self.touch_window = None
+        self.esp32_proc = None
+        self.esp32_busy = False
+        self.esp32_action = ""
+        self.esp32_buttons = []
 
     def do_activate(self):
         self._install_touch_scrollbar_css()
@@ -253,8 +257,254 @@ class TradeBox(Gtk.Application):
         box.append(self.button("SWORD / SHIELD", self.show_swsh))
         box.append(self.button("BRILLIANT DIAMOND / SHINING PEARL", self.show_bdsp))
         box.append(self.button("FIRE RED / LEAF GREEN", self.show_frlg))
+        box.append(self.button("ESP32 / FIRMWARE", self.show_esp32))
         box.append(self.button("SETTINGS", self.show_settings))
         self.win.set_child(box)
+
+
+    # ---------- ESP32 firmware manager ----------
+
+    def show_esp32(self, *_):
+        box = self.page("ESP32 / FIRMWARE", self.show_home)
+
+        port = self._serial_radio_device()
+
+        self.esp32_info = Gtk.Label(
+            label=(
+                f"Configured radio:\n{RADIO}\n\n"
+                f"Resolved port:\n{port or 'Not found'}\n\n"
+                "Tap CHECK BOARD to read the connected board."
+            ),
+            xalign=0,
+        )
+        self.esp32_info.set_wrap(True)
+        self.esp32_info.set_selectable(True)
+        box.append(self.esp32_info)
+
+        check = self.button(
+            "CHECK BOARD",
+            lambda *_: self._start_esp32_action("check"),
+        )
+
+        download = self.button(
+            "CHECK / DOWNLOAD LATEST",
+            lambda *_: self._start_esp32_action("download"),
+        )
+
+        flash = self.button(
+            "FLASH ESP32",
+            self.show_esp32_flash_confirm,
+            css="destructive-action",
+        )
+
+        self.esp32_buttons = [check, download, flash]
+
+        box.append(check)
+        box.append(download)
+        box.append(flash)
+
+        self.win.set_child(box)
+
+    def _set_esp32_buttons(self, enabled):
+        for button in getattr(self, "esp32_buttons", []):
+            try:
+                button.set_sensitive(bool(enabled))
+            except Exception:
+                pass
+
+    def _esp32_result_text(self, result):
+        if not result.get("ok"):
+            return f"ERROR\n{result.get('error', 'Unknown error')}"
+
+        lines = [
+            f"Port: {result.get('port', 'Unknown')}",
+            f"Chip: {result.get('chip', 'Unknown')}",
+            f"Installed firmware: {result.get('installed_version', 'Unknown')}",
+            f"Protocol: {result.get('protocol', 'Unknown')}",
+            (
+                "Protocol compatible: YES"
+                if result.get("protocol_current")
+                else "Protocol compatible: NO"
+            ),
+            f"Downloaded firmware: {result.get('downloaded_version', 'Not downloaded')}",
+        ]
+
+        if result.get("release"):
+            lines.append(f"Official release: {result['release']}")
+
+        if result.get("flashed_version"):
+            lines.append(f"Flashed: {result['flashed_version']}")
+
+        return "\n".join(lines)
+
+    def _start_esp32_action(self, action):
+        if self.esp32_busy:
+            self.set_status("ESP32 firmware operation already running.")
+            return
+
+        port = self._serial_radio_device()
+
+        if port is None:
+            self.set_status("ESP32 serial port not found.")
+            return
+
+        # Ensure no trade / gift process owns the serial port.
+        self.stop_current_session()
+
+        self.esp32_busy = True
+        self.esp32_action = action
+        self._set_esp32_buttons(False)
+
+        labels = {
+            "check": "Checking ESP32...",
+            "download": "Downloading and verifying official pokeldn firmware...",
+            "flash": "Flashing ESP32 — DO NOT DISCONNECT POWER OR USB...",
+        }
+
+        self.set_status(labels.get(action, "Working..."))
+
+        if hasattr(self, "esp32_info") and self.esp32_info:
+            self.esp32_info.set_text(labels.get(action, "Working..."))
+
+        cmd = [
+            str(PYTHON),
+            str(APP_DIR / "esp32_manager.py"),
+            action,
+            "--repo",
+            str(REPO),
+            "--port",
+            str(port),
+        ]
+
+        try:
+            self.esp32_proc = subprocess.Popen(
+                cmd,
+                cwd=str(APP_DIR),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+        except Exception as exc:
+            self.esp32_busy = False
+            self.esp32_proc = None
+            self._set_esp32_buttons(True)
+            self.set_status(f"Could not start ESP32 helper: {exc}")
+            return
+
+        GLib.timeout_add(250, self._poll_esp32_action)
+
+    def _poll_esp32_action(self):
+        proc = self.esp32_proc
+
+        if proc is None:
+            self.esp32_busy = False
+            self._set_esp32_buttons(True)
+            return False
+
+        rc = proc.poll()
+
+        if rc is None:
+            return True
+
+        output = proc.stdout.read() if proc.stdout else ""
+
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        logfile = LOG_DIR / f"esp32-{self.esp32_action}-{stamp}.log"
+
+        try:
+            logfile.write_text(output, encoding="utf-8")
+        except Exception:
+            pass
+
+        result = None
+
+        for line in reversed(output.splitlines()):
+            line = line.strip()
+
+            if not line.startswith("{"):
+                continue
+
+            try:
+                result = json.loads(line)
+                break
+            except Exception:
+                continue
+
+        if result is None:
+            result = {
+                "ok": False,
+                "error": (
+                    f"ESP32 helper exited with code {rc}. "
+                    f"See {logfile}"
+                ),
+            }
+
+        text = self._esp32_result_text(result)
+
+        if hasattr(self, "esp32_info") and self.esp32_info:
+            self.esp32_info.set_text(text)
+
+        if result.get("ok"):
+            if self.esp32_action == "flash":
+                self.set_status("ESP32 flash completed successfully.")
+            elif self.esp32_action == "download":
+                self.set_status("Official firmware downloaded and verified.")
+            else:
+                self.set_status("ESP32 check completed.")
+        else:
+            self.set_status(
+                f"ESP32 operation failed. See {logfile.name}"
+            )
+
+        self.esp32_proc = None
+        self.esp32_busy = False
+        self.esp32_action = ""
+        self._set_esp32_buttons(True)
+
+        return False
+
+    def show_esp32_flash_confirm(self, *_):
+        box = self.page(
+            "CONFIRM ESP32 FLASH",
+            self.show_esp32,
+        )
+
+        warning = Gtk.Label(
+            label=(
+                "This will rewrite the connected ESP32 with the official "
+                "pokeldn Wireless firmware already downloaded on this Pi.\n\n"
+                "Do not disconnect USB or power during the flash.\n\n"
+                "pokeldn will detect the chip, verify that the firmware image "
+                "matches it, verify the image, then flash it with esptool."
+            ),
+            xalign=0,
+        )
+        warning.set_wrap(True)
+        box.append(warning)
+
+        cancel = self.button(
+            "CANCEL",
+            self.show_esp32,
+        )
+        box.append(cancel)
+
+        flash = self.button(
+            "YES — FLASH ESP32",
+            lambda *_: self._confirm_esp32_flash(),
+            css="destructive-action",
+        )
+        box.append(flash)
+
+        self.win.set_child(box)
+
+    def _confirm_esp32_flash(self):
+        self.show_esp32()
+        GLib.idle_add(
+            lambda: (
+                self._start_esp32_action("flash"),
+                False,
+            )[1]
+        )
 
     # ---------- process/radio control ----------
 
@@ -318,6 +568,13 @@ class TradeBox(Gtk.Application):
             self.proc_log = None
 
     def stop_current_session(self, *_):
+        if getattr(self, "esp32_busy", False):
+            self.set_status(
+                "ESP32 firmware operation in progress. "
+                "Do not reset or disconnect the board."
+            )
+            return
+
         if self.proc and self.proc.poll() is None:
             try:
                 os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)

@@ -1,6 +1,6 @@
 # PokemonTradeBox-Pi
 
-**Current version: v0.4.0**
+**Current version: v0.4.1**
 
 Touchscreen Raspberry Pi frontend for [pokeldn](https://github.com/Decryptu/pokeldn).
 
@@ -38,11 +38,21 @@ sudo apt update
 sudo apt install python3-gi gir1.2-gtk-4.0 python3-serial squeekboard wfplug-squeek
 ```
 
-The ESP32 firmware manager uses pokeldn's own board-management code and `esptool`. For a source checkout of pokeldn, install the same esptool version used by pokeldn v0.22.2:
+The ESP32 firmware manager uses pokeldn's stable `gui.board` API and `esptool`. For a source checkout of pokeldn, install the esptool version required by that pokeldn release (v0.22.2 uses 5.4.0):
 
 ```bash
 ~/pokeldn/.venv/bin/python -m pip install esptool==5.4.0
 ```
+
+## pokeldn compatibility
+
+TradeBox targets pokeldn's documented **Program Surface 1.3** (API major 1): the Pokémon builder, Sword/Shield gift builder, FireRed/LeafGreen gift builder, gift-file helpers, and `gui.board`. Upstream tests resolve those supported names so a separate frontend can rely on them without depending on private implementation details.
+
+TradeBox also follows pokeldn's launcher shutdown contract: it sends **SIGINT only to the PID it started**, waits up to 15 seconds for a clean exit, then sends **SIGTERM** if needed. It does not use `pkill -f` or match launcher names, so it will not stop a pokeldn run started by another program.
+
+Sword/Shield custom gifts now pass Nature directly through pokeldn's gift-builder state and `swgift.compile()`; TradeBox no longer patches or reseals WC8 bytes itself.
+
+Upstream API reference: [pokeldn Program Surface 1.3](https://github.com/Decryptu/pokeldn/blob/main/docs/plugins.md#the-program-surface-13).
 
 ## Install
 

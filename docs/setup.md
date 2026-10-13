@@ -35,3 +35,37 @@ TradeBox v0.3.0 asks you to choose FireRed or LeafGreen when entering the FR/LG 
 The **Build Your Own** menu uses pokeldn's FR/LG gift builder. It can create a Wonder Card, Wonder News, or advanced Console Code payload, saves the result as a local `.pokegift`, then starts `bin/frlg_mg_host.py` with that file. The custom Wonder Card path has been tested successfully in-game.
 
 Console Code is an advanced feature that runs ARM code during the Mystery Gift session. Use code you understand; assembly source requires the GNU Arm toolchain, while pokeldn can also use a compatible prebuilt `.bin`.
+
+
+## Updating PokemonTradeBox-Pi on the Pi
+
+For an install created with `git clone`, SSH into the Pi and run:
+
+```bash
+cd ~/PokemonTradeBox
+git status --short
+git pull --ff-only
+./install.sh
+cat VERSION
+sudo reboot
+```
+
+What those commands do:
+
+- `git status --short` checks for local edits before updating.
+- `git pull --ff-only` downloads the newest GitHub version without creating an accidental merge commit.
+- `./install.sh` rechecks executable permissions, creates any missing local folders/config, and runs a Python syntax check.
+- `cat VERSION` shows the installed PokemonTradeBox-Pi version.
+- `sudo reboot` is the simplest way to restart a Labwc-autostart installation on the updated code.
+
+A normal Git update preserves `config.json`, `logs/`, `gifts/`, received Pokémon files, and the FR/LG dump files because they are excluded by `.gitignore`.
+
+If `git status --short` shows local changes to tracked files, make a full backup first:
+
+```bash
+cp -a ~/PokemonTradeBox ~/PokemonTradeBox.backup-$(date +%Y%m%d-%H%M%S)
+```
+
+Do not blindly run `git reset --hard` on a customized installation. Either copy the local changes somewhere safe, stash them, or manually reconcile them with the updated GitHub version.
+
+If the original installation was copied onto the Pi instead of cloned with Git, clone a fresh copy of the repository and move the old `config.json` into the new folder before starting TradeBox.

@@ -1,6 +1,6 @@
 # PokemonTradeBox-Pi
 
-**Current version: v0.2.0**
+**Current version: v0.3.0**
 
 Touchscreen Raspberry Pi frontend for [pokeldn](https://github.com/Decryptu/pokeldn).
 
@@ -11,7 +11,7 @@ Portable 800×480 Raspberry Pi trade-box UI with touch-friendly Pokémon buildin
 - Legends Z-A local trades
 - Sword / Shield Link Trades and Mystery Gifts
 - Brilliant Diamond / Shining Pearl local Union Room trades and received-Pokémon history
-- FireRed / LeafGreen Direct Corner trades, Wonder Cards, Wonder News, and read-only save/trainer info
+- FireRed / LeafGreen game selector, Direct Corner trades, Mystery Gift presets, Wonder News, read-only save/trainer info, and Build Your Own Wonder Card / Wonder News / Console Code tools
 - touch-first six-Pokémon team builder
 - species / move / held-item / ball pickers
 - large `- / +` controls for level, EVs, quantities, BP, money, and card IDs
@@ -22,7 +22,7 @@ Portable 800×480 Raspberry Pi trade-box UI with touch-friendly Pokémon buildin
 - pokeldn / PKHeX status page
 - Labwc autostart helper
 
-The original setup was tested on a Raspberry Pi 4, an 800×480 DSI touchscreen, and a CP2102 ESP32 radio.
+The original setup was tested on a Raspberry Pi 4, an 800×480 DSI touchscreen, and a CP2102 ESP32 radio. The custom FR/LG Wonder Card builder has also been tested end-to-end in-game.
 
 ## Requirements
 

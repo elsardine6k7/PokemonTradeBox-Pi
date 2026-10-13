@@ -1,6 +1,6 @@
 # PokemonTradeBox-Pi
 
-**Current version: v0.3.0**
+**Current version: v0.4.0**
 
 Touchscreen Raspberry Pi frontend for [pokeldn](https://github.com/Decryptu/pokeldn).
 
@@ -18,11 +18,12 @@ Portable 800×480 Raspberry Pi trade-box UI with touch-friendly Pokémon buildin
 - friendship / happiness selection
 - compact GTK4 layout tuned for 800×480
 - permanent touch-sized vertical scrollbars that do not fade away
+- ESP32 board check, official firmware download/verification, and guarded firmware flashing
 - ESP32 reset/status handling
 - pokeldn / PKHeX status page
 - Labwc autostart helper
 
-The original setup was tested on a Raspberry Pi 4, an 800×480 DSI touchscreen, and a CP2102 ESP32 radio. The custom FR/LG Wonder Card builder has also been tested end-to-end in-game.
+The original setup was tested on a Raspberry Pi 4, an 800×480 DSI touchscreen, and a CP2102 ESP32 radio. The custom FR/LG Wonder Card builder has been tested end-to-end in-game, and the v0.4.0 ESP32 firmware manager was tested end-to-end on a classic ESP32/CP2102, including downloading, verifying, flashing, and re-checking official pokeldn radio firmware.
 
 ## Requirements
 
@@ -35,6 +36,12 @@ On Raspberry Pi OS:
 ```bash
 sudo apt update
 sudo apt install python3-gi gir1.2-gtk-4.0 python3-serial squeekboard wfplug-squeek
+```
+
+The ESP32 firmware manager uses pokeldn's own board-management code and `esptool`. For a source checkout of pokeldn, install the same esptool version used by pokeldn v0.22.2:
+
+```bash
+~/pokeldn/.venv/bin/python -m pip install esptool==5.4.0
 ```
 
 ## Install
@@ -53,6 +60,16 @@ Optional Labwc autostart:
 ```bash
 ./install.sh --autostart
 ```
+
+### ESP32 firmware manager
+
+From the TradeBox home screen, open **ESP32 / FIRMWARE**.
+
+- **CHECK BOARD** reads the connected board, chip type, installed radio-firmware version, protocol compatibility, and the version of any firmware already downloaded on the Pi.
+- **CHECK / DOWNLOAD LATEST** uses pokeldn's official release downloader, validates the release source and SHA256 checksums, and stores the official firmware images in the pokeldn checkout.
+- **FLASH ESP32** shows a confirmation screen, then calls pokeldn's own chip-detection, image-validation, checksum-verification, and esptool flashing path. TradeBox blocks its normal STOP/reset action while a firmware operation is in progress.
+
+Do not disconnect USB or power while flashing.
 
 ## Update an existing Pi install
 

@@ -27,7 +27,7 @@ The original setup was tested on a Raspberry Pi 4, an 800×480 DSI touchscreen, 
 
 ## Requirements
 
-Install and verify [pokeldn](https://github.com/Decryptu/pokeldn) first. The default config expects it at `~/pokeldn`.
+Install and verify [pokeldn](https://github.com/Decryptu/pokeldn) **v0.23.0 or newer** first. TradeBox v0.4.1 relies on pokeldn's Program Surface 1.3, including native Sword/Shield gift Nature support. The default config expects pokeldn at `~/pokeldn`.
 
 You must provide your own compatible hardware, `prod.keys`, and trainer metadata. This repository does not contain console keys, ROMs, saves, or Nintendo game data.
 
@@ -46,11 +46,11 @@ The ESP32 firmware manager uses pokeldn's stable `gui.board` API and `esptool`. 
 
 ## pokeldn compatibility
 
-TradeBox targets pokeldn's documented **Program Surface 1.3** (API major 1): the Pokémon builder, Sword/Shield gift builder, FireRed/LeafGreen gift builder, gift-file helpers, and `gui.board`. Upstream tests resolve those supported names so a separate frontend can rely on them without depending on private implementation details.
+TradeBox v0.4.1 requires **pokeldn v0.23.0+** and targets pokeldn's documented **Program Surface 1.3** (API major 1): the Pokémon builder, Sword/Shield gift builder, FireRed/LeafGreen gift builder, gift-file helpers, and `gui.board`. Upstream tests resolve those supported names so a separate frontend can rely on them without depending on private implementation details.
 
 TradeBox also follows pokeldn's launcher shutdown contract: it sends **SIGINT only to the PID it started**, waits up to 15 seconds for a clean exit, then sends **SIGTERM** if needed. It does not use `pkill -f` or match launcher names, so it will not stop a pokeldn run started by another program.
 
-Sword/Shield custom gifts now pass Nature directly through pokeldn's gift-builder state and `swgift.compile()`; TradeBox no longer patches or reseals WC8 bytes itself.
+Sword/Shield custom gifts now pass Nature directly through pokeldn's gift-builder state and `swgift.compile()`; TradeBox no longer patches or reseals WC8 bytes itself. This path was tested end-to-end against pokeldn v0.23.0 with an explicitly selected Nature.
 
 Upstream API reference: [pokeldn Program Surface 1.3](https://github.com/Decryptu/pokeldn/blob/main/docs/plugins.md#the-program-surface-13).
 

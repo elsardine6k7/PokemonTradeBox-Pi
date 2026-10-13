@@ -21,6 +21,17 @@ python3 ~/PokemonTradeBox/tradebox.py
 ```
 
 
+## pokeldn stable program surface
+
+TradeBox v0.4.1 is written against pokeldn's documented **Program Surface 1.3** (API major 1). The supported surface includes the Pokémon builder, both Mystery Gift builders, gift-file helpers, and `gui.board`. pokeldn has an upstream test that resolves these supported names so external frontends do not need to depend on private internals.
+
+TradeBox's Sword/Shield gift builder passes the selected Nature in the normal builder state and calls `pokeldn.swsh.gift_builder.compile(state)`. It does not directly edit or reseal WC8 bytes.
+
+For launcher shutdown, TradeBox follows pokeldn's documented contract: SIGINT is sent to the exact process TradeBox launched, TradeBox waits up to 15 seconds, and SIGTERM is used only if the launcher is still running. TradeBox never searches for launcher names with `pkill -f`, so unrelated pokeldn sessions are left alone.
+
+See [pokeldn Program Surface 1.3](https://github.com/Decryptu/pokeldn/blob/main/docs/plugins.md#the-program-surface-13).
+
+
 ## Brilliant Diamond / Shining Pearl
 
 Add a `bdsp` trainer entry to `config.json` using the original trainer name plus raw TID/SID values. TradeBox v0.2.0 hosts a local Union Room with `bin/bdsp_host.py`, completes the trade, and saves the partner's received records as `received-bdsp_*.pb8`.

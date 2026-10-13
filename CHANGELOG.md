@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.4.0
+
+- added a touchscreen ESP32 / Firmware manager to the home screen
+- added Check Board for connected port, chip, installed firmware, protocol compatibility, and downloaded firmware
+- added Check / Download Latest using pokeldn's official release downloader and SHA256 verification
+- added guarded ESP32 flashing through pokeldn's own chip detection, image validation, checksum verification, and esptool path
+- added a confirmation screen and blocked TradeBox STOP/reset while a firmware operation is active
+- added per-operation ESP32 logs under `logs/`
+- tested the full check → download/verify → flash → re-check flow on a classic ESP32 with a CP2102 USB bridge and pokeldn radio firmware 1.6.1
+- documented the `esptool==5.4.0` requirement for source-checkout installations of pokeldn
+- install checks now syntax-check the ESP32 helper and warn when esptool is missing
+
+
 ## v0.3.0
 
 - added a FireRed / LeafGreen chooser before entering FR/LG tools

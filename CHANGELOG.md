@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.4.1
+
+- aligned TradeBox with pokeldn's documented Program Surface 1.3 stable API
+- simplified Sword/Shield custom Nature handling to use the supported gift-builder state and `swgift.compile()`
+- removed TradeBox's manual WC8 Nature byte patching and resealing path
+- changed session shutdown to signal only the exact pokeldn PID TradeBox launched
+- session shutdown now sends SIGINT first, waits up to 15 seconds, then sends SIGTERM if needed
+- removed launcher-name `pkill -f` cleanup so TradeBox cannot stop a pokeldn run started by another program
+- removed the unnecessary separate process group created for launchers
+
+
 ## v0.4.0
 
 - added a touchscreen ESP32 / Firmware manager to the home screen

@@ -23,9 +23,9 @@ python3 ~/PokemonTradeBox/tradebox.py
 
 ## pokeldn stable program surface
 
-TradeBox v0.4.1 is written against pokeldn's documented **Program Surface 1.3** (API major 1). The supported surface includes the Pokémon builder, both Mystery Gift builders, gift-file helpers, and `gui.board`. pokeldn has an upstream test that resolves these supported names so external frontends do not need to depend on private internals.
+TradeBox v0.4.1 requires **pokeldn v0.23.0 or newer** and is written against pokeldn's documented **Program Surface 1.3** (API major 1). The supported surface includes the Pokémon builder, both Mystery Gift builders, gift-file helpers, and `gui.board`. pokeldn has an upstream test that resolves these supported names so external frontends do not need to depend on private internals.
 
-TradeBox's Sword/Shield gift builder passes the selected Nature in the normal builder state and calls `pokeldn.swsh.gift_builder.compile(state)`. It does not directly edit or reseal WC8 bytes.
+TradeBox's Sword/Shield gift builder passes the selected Nature in the normal builder state and calls `pokeldn.swsh.gift_builder.compile(state)`. It does not directly edit or reseal WC8 bytes. Native Nature handling was added in pokeldn v0.23.0 and was verified end-to-end with TradeBox.
 
 For launcher shutdown, TradeBox follows pokeldn's documented contract: SIGINT is sent to the exact process TradeBox launched, TradeBox waits up to 15 seconds, and SIGTERM is used only if the launcher is still running. TradeBox never searches for launcher names with `pkill -f`, so unrelated pokeldn sessions are left alone.
 

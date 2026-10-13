@@ -18,7 +18,7 @@ from pathlib import Path
 
 HOME = Path.home()
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.3.0"
+APP_VERSION = "0.4.0"
 CONFIG_PATH = Path(
     os.environ.get("POKEMON_TRADEBOX_CONFIG", str(APP_DIR / "config.json"))
 ).expanduser()

@@ -37,6 +37,27 @@ The **Build Your Own** menu uses pokeldn's FR/LG gift builder. It can create a W
 Console Code is an advanced feature that runs ARM code during the Mystery Gift session. Use code you understand; assembly source requires the GNU Arm toolchain, while pokeldn can also use a compatible prebuilt `.bin`.
 
 
+## ESP32 firmware manager
+
+TradeBox v0.4.0 adds **ESP32 / FIRMWARE** to the home screen. It reuses pokeldn's board-management code instead of maintaining a separate flasher.
+
+For a pokeldn source checkout, make sure esptool is installed in pokeldn's virtual environment:
+
+```bash
+~/pokeldn/.venv/bin/python -m pip install esptool==5.4.0
+```
+
+The three actions are:
+
+- **CHECK BOARD** — opens the configured serial port, reads pokeldn firmware identity, chip type, installed firmware version and protocol compatibility, and reports the locally downloaded radio image version when available.
+- **CHECK / DOWNLOAD LATEST** — asks pokeldn for the newest published official release that carries firmware images, verifies the release asset source and SHA256SUMS, then writes the official radio/controller images into `~/pokeldn/gui/firmware/`.
+- **FLASH ESP32** — after an explicit confirmation screen, uses pokeldn's chip detection and validation before writing. The helper refuses unsupported chips, missing images, chip/image mismatches, invalid merged images and checksum failures before flashing.
+
+TradeBox disables its normal STOP/reset path while a firmware operation is active. Do not disconnect USB or power during a flash.
+
+The v0.4.0 flow was tested end-to-end on a classic ESP32 with a CP2102 USB bridge: board check, official v0.22.2 firmware download/verification, flashing radio firmware 1.6.1, and a successful post-flash board check.
+
+
 ## Updating PokemonTradeBox-Pi on the Pi
 
 For an install created with `git clone`, SSH into the Pi and run:

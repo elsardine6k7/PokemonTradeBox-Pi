@@ -18,7 +18,7 @@ from pathlib import Path
 
 HOME = Path.home()
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.4.0"
+APP_VERSION = "0.4.1"
 CONFIG_PATH = Path(
     os.environ.get("POKEMON_TRADEBOX_CONFIG", str(APP_DIR / "config.json"))
 ).expanduser()
@@ -70,7 +70,6 @@ sys.path.insert(0, str(REPO))
 from pokeldn import gifts, pokemon
 from pokeldn.swsh import gift_builder as swgift
 from pokeldn.frlg.gift import builder as frgift
-from pokeldn.swsh import gift_file, wc8
 from pokeldn.swsh import events as swevents
 
 TRAINERS = CONFIG["trainers"]
@@ -560,12 +559,56 @@ class TradeBox(Gtk.Application):
     def _cleanup_proc(self):
         if self.proc and self.proc.poll() is not None:
             self.proc = None
-        if self.proc_log:
+        if self.proc_log and self.proc is None:
             try:
                 self.proc_log.close()
             except Exception:
                 pass
             self.proc_log = None
+
+    def _stop_launched_process(self):
+        """Stop only the pokeldn launcher TradeBox started."""
+        proc = self.proc
+
+        if not proc:
+            self._cleanup_proc()
+            return True
+
+        if proc.poll() is not None:
+            self._cleanup_proc()
+            return True
+
+        try:
+            proc.send_signal(signal.SIGINT)
+        except ProcessLookupError:
+            self._cleanup_proc()
+            return True
+        except Exception as exc:
+            self.set_status(f"Could not send SIGINT to PID {proc.pid}: {exc}")
+            return False
+
+        try:
+            proc.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            try:
+                proc.terminate()
+            except ProcessLookupError:
+                pass
+            except Exception as exc:
+                self.set_status(f"Could not send SIGTERM to PID {proc.pid}: {exc}")
+                return False
+
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.set_status(
+                    f"PID {proc.pid} is still running after SIGINT and SIGTERM. "
+                    "TradeBox will not start another session or reset the ESP32."
+                )
+                return False
+
+        self._cleanup_proc()
+        return True
 
     def stop_current_session(self, *_):
         if getattr(self, "esp32_busy", False):
@@ -575,33 +618,9 @@ class TradeBox(Gtk.Application):
             )
             return
 
-        if self.proc and self.proc.poll() is None:
-            try:
-                os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
-                self.proc.wait(timeout=3)
-            except Exception:
-                try:
-                    os.killpg(os.getpgid(self.proc.pid), signal.SIGKILL)
-                except Exception:
-                    pass
+        if not self._stop_launched_process():
+            return
 
-        # Also catches a manually-started or orphaned session.
-        for pattern in (
-            str(REPO / "bin/za_host.py"),
-            str(REPO / "bin/za_join.py"),
-            str(REPO / "bin/swsh_host.py"),
-            str(REPO / "bin/swsh_connect.py"),
-            str(REPO / "bin/swsh_gift_host.py"),
-            str(REPO / "bin/bdsp_host.py"),
-            str(REPO / "bin/frlg_trade_host.py"),
-            str(REPO / "bin/frlg_trade_join.py"),
-            str(REPO / "bin/frlg_mg_host.py"),
-        ):
-            subprocess.run(["pkill", "-TERM", "-f", pattern],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-        time.sleep(0.5)
-        self._cleanup_proc()
         try:
             self.reset_esp32()
             self.set_status("Stopped. ESP32 ready.")
@@ -609,7 +628,10 @@ class TradeBox(Gtk.Application):
             self.set_status(f"Stopped. ESP32 reset warning: {exc}")
 
     def launch(self, cmd, label, *, reset=True):
-        self.stop_current_session()
+        if not self._stop_launched_process():
+            self.set_status("Previous session is still running; new session not started.")
+            return
+
         if reset:
             try:
                 self.reset_esp32()
@@ -628,7 +650,6 @@ class TradeBox(Gtk.Application):
             env=env,
             stdout=self.proc_log,
             stderr=subprocess.STDOUT,
-            preexec_fn=os.setsid,
         )
         self.set_status(f"{label}  •  PID {self.proc.pid}")
         GLib.timeout_add_seconds(1, self.poll_process)
@@ -2106,24 +2127,8 @@ class TradeBox(Gtk.Application):
         col.append(send)
 
     def compile_custom_gift(self, state):
-        # Everything except explicit Nature uses pokeldn's normal builder.
-        if state.get("kind") != "pokemon" or "nature" not in state:
-            return swgift.compile(state)
-
-        raw = bytearray(swgift.record(state))
-
-        nature_offset, _fmt = wc8.POKEMON["nature"]
-        raw[nature_offset] = int(state["nature"]) & 0xFF
-
-        # Recalculate the Wonder Card checksum.
-        raw = wc8.seal(raw)
-
-        name = state.get("nickname") or "Pokemon"
-
-        return gift_file.from_record(
-            raw,
-            name=name
-        )
+        # Nature is part of pokeldn's stable Sword/Shield gift-builder API.
+        return swgift.compile(state)
 
     def send_custom_gift(self, button, kind, w, summary):
         try:

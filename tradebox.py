@@ -789,6 +789,9 @@ class TradeBox(BankUI, Gtk.Application):
 
     def _finish_radio_operation(self):
         self._session_ready = None
+        if (self.session_control.operation == "bank-launch" and self._bank_run is not None
+                and self._bank_run["state"] == "starting" and self._bank_run["proc"] is None):
+            self._bank_run["state"] = "prepared"
         self.session_control.finish()
         self.esp32_busy = False
         self._sync_radio_buttons()

@@ -164,6 +164,50 @@ class BankCallbacksTests(unittest.TestCase):
         self.assertFalse(self.app.poll_process(proc))
         self.assertEqual(self.rpc, [])
 
+    def test_reset_failure_returns_prepared_queue_to_retry_or_cancel(self):
+        self.configure()
+        run = self.prepared()
+        def failed_reset():
+            raise OSError("Board disconnected")
+        self.app.reset_esp32 = failed_reset
+        self.app.bank_start_prepared()
+        self.complete_reset()
+        self.assertEqual(run["state"], "prepared")
+        self.assertFalse(self.app.session_control.busy)
+        self.assertEqual(self.spawns, [])
+        self.assertIn("Board disconnected", self.app.current_label)
+        self.app.bank_cancel_prepared()
+        self.rpc[-1][2]({"token": run["token"], "completed": 0, "total": 2}, "")
+        self.assertIsNone(self.app._bank_run)
+        self.assertEqual(len(self.app.bank_queue), 2)
+
+    def test_attach_submission_failure_stops_the_spawned_host(self):
+        self.configure()
+        run = self.prepared()
+        def broken_rpc(*_args, **_kwargs):
+            raise OSError("Cannot submit Bank request")
+        self.app._bank_rpc = broken_rpc
+        self.app.bank_start_prepared()
+        self.complete_reset()
+        self.assertEqual(len(self.spawns), 1)
+        self.assertEqual(run["state"], "active")
+        self.assertEqual(len(run["proc"].signals), 1)
+        self.assertEqual(self.app.session_control.operation, "stop")
+        self.assertIn("Cannot submit", run["error"])
+
+    def test_bank_launcher_start_failure_keeps_queue_and_finishes_preparation(self):
+        self.configure()
+        run = self.prepared()
+        self.spawn_error = OSError("Host executable missing")
+        self.app.bank_start_prepared()
+        self.complete_reset()
+        self.assertEqual(self.spawns, [])
+        self.assertEqual(self.rpc[-1][0], "end")
+        self.rpc[-1][2]({"token": run["token"], "completed": 0, "total": 2}, "")
+        self.assertIsNone(self.app._bank_run)
+        self.assertEqual(len(self.app.bank_queue), 2)
+        self.assertIn("Host executable missing", self.app.current_label)
+
 
 if __name__ == "__main__":
     unittest.main()

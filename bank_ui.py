@@ -384,10 +384,17 @@ class BankUI:
             self._bank_rpc("attach", {"token": run["token"], "pid": self.proc.pid},
                            lambda result, error: self._bank_attached(run["token"], error))
         except Exception as exc:
-            run["start_error"] = str(exc)
-            run["state"] = "prepared"
-            self.bank_cancel_prepared()
-            self.set_status(f"Could not start Bank host: {exc}")
+            if self.proc is not None and self.proc.poll() is None:
+                run["proc"], run["state"] = self.proc, "active"
+                # The controller still holds its launch reservation here.
+                # Request shutdown after that callback releases it.
+                self._bank_glib.idle_add(self._bank_run_error, run["token"],
+                                         f"Could not attach the Bank host: {exc}")
+            else:
+                run["start_error"] = str(exc)
+                run["state"] = "prepared"
+                self.bank_cancel_prepared()
+                self.set_status(f"Could not start Bank host: {exc}")
         return False
 
     def _bank_attached(self, token, error):

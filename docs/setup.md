@@ -23,11 +23,13 @@ python3 ~/PokemonTradeBox/tradebox.py
 
 ## pokeldn stable program surface
 
-TradeBox v0.4.1 requires **pokeldn v0.23.0 or newer** and is written against pokeldn's documented **Program Surface 1.3** (API major 1). The supported surface includes the Pokémon builder, both Mystery Gift builders, gift-file helpers, and `gui.board`. pokeldn has an upstream test that resolves these supported names so external frontends do not need to depend on private internals.
+TradeBox v0.4.2 requires **pokeldn v0.23.0 or newer** and is written against pokeldn's documented **Program Surface 1.3** (API major 1). The supported surface includes the Pokémon builder, both Mystery Gift builders, gift-file helpers, and `gui.board`. pokeldn has an upstream test that resolves these supported names so external frontends do not need to depend on private internals.
 
 TradeBox's Sword/Shield gift builder passes the selected Nature in the normal builder state and calls `pokeldn.swsh.gift_builder.compile(state)`. It does not directly edit or reseal WC8 bytes. Native Nature handling was added in pokeldn v0.23.0 and was verified end-to-end with TradeBox.
 
 For launcher shutdown, TradeBox follows pokeldn's documented contract: SIGINT is sent to the exact process TradeBox launched, TradeBox waits up to 15 seconds, and SIGTERM is used only if the launcher is still running. TradeBox never searches for launcher names with `pkill -f`, so unrelated pokeldn sessions are left alone.
+
+TradeBox v0.4.2 performs that wait through GTK timers and resets the radio in a worker thread. STOP changes the status immediately; it does not promise that the launcher will exit immediately. New sessions and board operations wait until shutdown and reset complete. If the launcher remains running after the additional 5-second SIGTERM window, the requested next action is cancelled and the radio stays reserved until that PID exits. Then retry the action explicitly.
 
 See [pokeldn Program Surface 1.3](https://github.com/Decryptu/pokeldn/blob/main/docs/plugins.md#the-program-surface-13).
 
@@ -101,3 +103,15 @@ cp -a ~/PokemonTradeBox ~/PokemonTradeBox.backup-$(date +%Y%m%d-%H%M%S)
 Do not blindly run `git reset --hard` on a customized installation. Either copy the local changes somewhere safe, stash them, or manually reconcile them with the updated GitHub version.
 
 If the original installation was copied onto the Pi instead of cloned with Git, clone a fresh copy of the repository and move the old `config.json` into the new folder before starting TradeBox.
+
+## v0.4.2 hardware check
+
+STOP and ESP32 reset were confirmed working on the Pi. Use this checklist to further verify shutdown and board-operation coordination:
+
+1. Start a normal trade host, tap STOP, and confirm **Stopping...** appears immediately. Navigate between pages while it stops; the touchscreen should continue responding.
+2. Wait for **Stopped. ESP32 ready.**, then start another trade. The new session should connect normally.
+3. With a host running, start **CHECK BOARD**. It should stop the old host and reset the radio before opening the firmware helper.
+4. During **CHECK BOARD** or **CHECK / DOWNLOAD LATEST**, return to a game page and attempt to start a trade or gift. TradeBox should report that the ESP32 operation is in progress and leave the operation running. STOP and board-action buttons should stay disabled during the operation.
+5. After the board operation completes, confirm STOP and board-action buttons work again and a normal trade can start.
+
+These first checks do not require reflashing the ESP32. Flashing uses the same reservation and retains its existing explicit confirmation screen. The automated tests exercise failed-stop, reset, and process-start paths without using a real device.

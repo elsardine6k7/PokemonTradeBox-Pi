@@ -1,6 +1,6 @@
 # PokemonTradeBox-Pi
 
-**Current version: v0.4.1**
+**Current version: v0.4.2**
 
 Touchscreen Raspberry Pi frontend for [pokeldn](https://github.com/Decryptu/pokeldn).
 
@@ -20,6 +20,7 @@ Portable 800×480 Raspberry Pi trade-box UI with touch-friendly Pokémon buildin
 - permanent touch-sized vertical scrollbars that do not fade away
 - ESP32 board check, official firmware download/verification, and guarded firmware flashing
 - ESP32 reset/status handling
+- responsive STOP and exclusive radio operations during shutdown, reset, and firmware work
 - pokeldn / PKHeX status page
 - Labwc autostart helper
 
@@ -27,7 +28,7 @@ The original setup was tested on a Raspberry Pi 4, an 800×480 DSI touchscreen, 
 
 ## Requirements
 
-Install and verify [pokeldn](https://github.com/Decryptu/pokeldn) **v0.23.0 or newer** first. TradeBox v0.4.1 relies on pokeldn's Program Surface 1.3, including native Sword/Shield gift Nature support. The default config expects pokeldn at `~/pokeldn`.
+Install and verify [pokeldn](https://github.com/Decryptu/pokeldn) **v0.23.0 or newer** first. TradeBox v0.4.2 relies on pokeldn's Program Surface 1.3, including native Sword/Shield gift Nature support. The default config expects pokeldn at `~/pokeldn`.
 
 You must provide your own compatible hardware, `prod.keys`, and trainer metadata. This repository does not contain console keys, ROMs, saves, or Nintendo game data.
 
@@ -46,9 +47,13 @@ The ESP32 firmware manager uses pokeldn's stable `gui.board` API and `esptool`. 
 
 ## pokeldn compatibility
 
-TradeBox v0.4.1 requires **pokeldn v0.23.0+** and targets pokeldn's documented **Program Surface 1.3** (API major 1): the Pokémon builder, Sword/Shield gift builder, FireRed/LeafGreen gift builder, gift-file helpers, and `gui.board`. Upstream tests resolve those supported names so a separate frontend can rely on them without depending on private implementation details.
+TradeBox v0.4.2 requires **pokeldn v0.23.0+** and targets pokeldn's documented **Program Surface 1.3** (API major 1): the Pokémon builder, Sword/Shield gift builder, FireRed/LeafGreen gift builder, gift-file helpers, and `gui.board`. Upstream tests resolve those supported names so a separate frontend can rely on them without depending on private implementation details.
 
 TradeBox also follows pokeldn's launcher shutdown contract: it sends **SIGINT only to the PID it started**, waits up to 15 seconds for a clean exit, then sends **SIGTERM** if needed. It does not use `pkill -f` or match launcher names, so it will not stop a pokeldn run started by another program.
+
+In v0.4.2, STOP shows **Stopping...** immediately and monitors the process with GTK timers. The ESP32 reset runs in a worker thread after the process exits, so the touchscreen stays responsive throughout shutdown. The graceful-exit timing remains 15 seconds, followed by up to 5 seconds after SIGTERM. A process that remains running blocks new sessions and board operations; its pending replacement is cancelled even if it exits later.
+
+Trade starts, board checks/downloads/flashes, and STOP share one radio reservation. A new trade cannot reset the ESP32 during firmware work. Closing the window during a board operation is blocked; closing it during a running trade first requests the same graceful shutdown.
 
 Sword/Shield custom gifts now pass Nature directly through pokeldn's gift-builder state and `swgift.compile()`; TradeBox no longer patches or reseals WC8 bytes itself. This path was tested end-to-end against pokeldn v0.23.0 with an explicitly selected Nature.
 
@@ -107,6 +112,18 @@ Then either keep/reapply those local changes manually or return the tracked file
 If the existing TradeBox folder was copied manually instead of cloned from GitHub, the easiest upgrade is to clone a fresh copy and move your existing `config.json` into it.
 
 See [docs/setup.md](docs/setup.md) and [docs/hardware.md](docs/hardware.md).
+
+## Regression checks
+
+The shutdown controller and actual TradeBox process callbacks have hardware-independent regression tests. They use fake processes, a controlled clock, and a simulated GTK scheduler, so they need neither GTK nor a pokeldn checkout:
+
+```bash
+python3 -m unittest discover -s tests -v
+python3 -m py_compile tradebox.py esp32_manager.py session_control.py
+bash -n install.sh start-tradebox.sh
+```
+
+GitHub Actions runs these checks on Ubuntu with Python 3.12. They cover PID-only signalling, grace-period timing, competing radio operations, reset and startup failures, and cancelled requests after failed shutdowns. Rick confirmed v0.4.2 STOP and ESP32 reset working on the Pi. Additional device checks are documented in [the test checklist](docs/setup.md#v042-hardware-check).
 
 ## Friendship / Happiness
 

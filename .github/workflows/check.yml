@@ -1,0 +1,23 @@
+name: Check
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  session-control:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Check Python syntax
+        run: python -m py_compile tradebox.py esp32_manager.py session_control.py
+      - name: Check launcher scripts
+        run: bash -n install.sh start-tradebox.sh
+      - name: Test shutdown and radio operation coordination
+        run: python -m unittest discover -s tests -v

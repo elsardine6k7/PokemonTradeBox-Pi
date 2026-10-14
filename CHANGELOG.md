@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.4.2
+
+- made STOP respond immediately while GTK timers monitor the exact launcher PID
+- preserved SIGINT, the 15-second graceful-exit window, and SIGTERM followed by up to 5 seconds
+- moved serial reset delays to a worker thread, after the launcher exits
+- reserved the radio throughout shutdown, reset, and each firmware-helper operation
+- blocked competing trades, gift writes, STOP/reset, and board actions while the radio is reserved
+- cancelled pending actions after failed shutdowns; a late process exit releases the reservation without starting the cancelled action
+- prevented stale process watchers from reporting against a replacement session
+- handled reset-worker and launcher/helper startup failures without leaving the radio reserved
+- blocked window closing during radio operations and gracefully stopped running sessions before closing
+- added hardware-independent shutdown and callback regression tests and an Ubuntu CI workflow
+- updated install syntax checks for the new session controller
+- Pi touchscreen and ESP32 hardware validation is pending
+
 ## v0.4.1
 
 - aligned TradeBox with pokeldn v0.23.0+ and its documented Program Surface 1.3 stable API

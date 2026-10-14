@@ -8,17 +8,19 @@ from gi.repository import Gtk, GLib, Pango, Gdk
 import copy
 import json
 import os
-import signal
 import subprocess
 import re
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
+from session_control import SessionControl
+
 HOME = Path.home()
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.4.1"
+APP_VERSION = "0.4.2"
 CONFIG_PATH = Path(
     os.environ.get("POKEMON_TRADEBOX_CONFIG", str(APP_DIR / "config.json"))
 ).expanduser()
@@ -136,15 +138,30 @@ class TradeBox(Gtk.Application):
         self.esp32_busy = False
         self.esp32_action = ""
         self.esp32_buttons = []
+        self.stop_button = None
+        self.session_control = SessionControl()
+        self._session_ready = None
+        self._session_reset = True
+        self._stop_phase_shown = ""
+        self._reset_thread = None
 
     def do_activate(self):
         self._install_touch_scrollbar_css()
         self.win = Gtk.ApplicationWindow(application=self)
+        self.win.connect("close-request", self._close_requested)
         self.win.set_title("Pokemon Trade Box")
         self.win.set_decorated(False)
         self.win.maximize()
         self.show_home()
         self.win.present()
+
+    def _close_requested(self, *_):
+        if self._radio_is_busy():
+            return True
+        if self.proc is not None and self.proc.poll() is None:
+            self._request_radio_operation("stop", lambda: self.quit())
+            return True
+        return False
 
     def _install_touch_scrollbar_css(self):
         provider = Gtk.CssProvider()
@@ -227,6 +244,8 @@ class TradeBox(Gtk.Application):
         stop = Gtk.Button(label="STOP")
         stop.add_css_class("destructive-action")
         stop.connect("clicked", self.stop_current_session)
+        stop.set_sensitive(not self.session_control.busy)
+        self.stop_button = stop
         head.append(stop)
 
         outer.append(head)
@@ -303,6 +322,7 @@ class TradeBox(Gtk.Application):
         box.append(flash)
 
         self.win.set_child(box)
+        self._sync_radio_buttons()
 
     def _set_esp32_buttons(self, enabled):
         for button in getattr(self, "esp32_buttons", []):
@@ -310,6 +330,23 @@ class TradeBox(Gtk.Application):
                 button.set_sensitive(bool(enabled))
             except Exception:
                 pass
+
+    def _sync_radio_buttons(self):
+        enabled = not self.session_control.busy
+        self._set_esp32_buttons(enabled)
+        if self.stop_button is not None:
+            self.stop_button.set_sensitive(enabled)
+
+    def _radio_is_busy(self):
+        if not self.session_control.busy:
+            return False
+        if self.session_control.phase == "failed":
+            self.set_status(self.session_control.error)
+        elif self.session_control.operation == "firmware":
+            self.set_status("ESP32 operation in progress. Wait for it to finish.")
+        else:
+            self.set_status("Stopping or resetting the previous session. Please wait.")
+        return True
 
     def _esp32_result_text(self, result):
         if not result.get("ok"):
@@ -337,8 +374,7 @@ class TradeBox(Gtk.Application):
         return "\n".join(lines)
 
     def _start_esp32_action(self, action):
-        if self.esp32_busy:
-            self.set_status("ESP32 firmware operation already running.")
+        if self._radio_is_busy():
             return
 
         port = self._serial_radio_device()
@@ -347,12 +383,13 @@ class TradeBox(Gtk.Application):
             self.set_status("ESP32 serial port not found.")
             return
 
-        # Ensure no trade / gift process owns the serial port.
-        self.stop_current_session()
+        # Hold the reservation through shutdown, reset, and the entire helper run.
+        self._request_radio_operation(
+            "firmware", lambda: self._launch_esp32_helper(action, port)
+        )
 
-        self.esp32_busy = True
+    def _launch_esp32_helper(self, action, port):
         self.esp32_action = action
-        self._set_esp32_buttons(False)
 
         labels = {
             "check": "Checking ESP32...",
@@ -384,20 +421,18 @@ class TradeBox(Gtk.Application):
                 text=True,
             )
         except Exception as exc:
-            self.esp32_busy = False
             self.esp32_proc = None
-            self._set_esp32_buttons(True)
             self.set_status(f"Could not start ESP32 helper: {exc}")
-            return
+            return False
 
         GLib.timeout_add(250, self._poll_esp32_action)
+        return True  # Keep the radio reserved until the helper exits.
 
     def _poll_esp32_action(self):
         proc = self.esp32_proc
 
         if proc is None:
-            self.esp32_busy = False
-            self._set_esp32_buttons(True)
+            self._finish_radio_operation()
             return False
 
         rc = proc.poll()
@@ -406,6 +441,8 @@ class TradeBox(Gtk.Application):
             return True
 
         output = proc.stdout.read() if proc.stdout else ""
+        if proc.stdout:
+            proc.stdout.close()
 
         stamp = time.strftime("%Y%m%d-%H%M%S")
         logfile = LOG_DIR / f"esp32-{self.esp32_action}-{stamp}.log"
@@ -456,9 +493,8 @@ class TradeBox(Gtk.Application):
             )
 
         self.esp32_proc = None
-        self.esp32_busy = False
         self.esp32_action = ""
-        self._set_esp32_buttons(True)
+        self._finish_radio_operation()
 
         return False
 
@@ -566,101 +602,132 @@ class TradeBox(Gtk.Application):
                 pass
             self.proc_log = None
 
-    def _stop_launched_process(self):
-        """Stop only the pokeldn launcher TradeBox started."""
-        proc = self.proc
-
-        if not proc:
-            self._cleanup_proc()
-            return True
-
-        if proc.poll() is not None:
-            self._cleanup_proc()
-            return True
-
-        try:
-            proc.send_signal(signal.SIGINT)
-        except ProcessLookupError:
-            self._cleanup_proc()
-            return True
-        except Exception as exc:
-            self.set_status(f"Could not send SIGINT to PID {proc.pid}: {exc}")
+    def _request_radio_operation(self, operation, ready, *, reset=True):
+        if self._radio_is_busy():
             return False
-
-        try:
-            proc.wait(timeout=15)
-        except subprocess.TimeoutExpired:
-            try:
-                proc.terminate()
-            except ProcessLookupError:
-                pass
-            except Exception as exc:
-                self.set_status(f"Could not send SIGTERM to PID {proc.pid}: {exc}")
-                return False
-
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.set_status(
-                    f"PID {proc.pid} is still running after SIGINT and SIGTERM. "
-                    "TradeBox will not start another session or reset the ESP32."
-                )
-                return False
-
-        self._cleanup_proc()
+        self._session_ready = ready
+        self._session_reset = reset
+        self._stop_phase_shown = ""
+        self.session_control.begin(operation, self.proc)
+        self.esp32_busy = operation == "firmware"
+        self._sync_radio_buttons()
+        self.set_status("Stopping..." if self.session_control.phase == "stopping"
+                        else "Preparing ESP32...")
+        GLib.timeout_add(100, self._poll_radio_operation)
         return True
 
-    def stop_current_session(self, *_):
-        if getattr(self, "esp32_busy", False):
-            self.set_status(
-                "ESP32 firmware operation in progress. "
-                "Do not reset or disconnect the board."
-            )
-            return
+    def _poll_radio_operation(self):
+        phase = self.session_control.poll()
+        if phase == "ready":
+            self._cleanup_proc()
+            if self._session_reset:
+                self.session_control.mark_resetting()
+                self.set_status("Resetting ESP32...")
+                try:
+                    self._reset_thread = threading.Thread(
+                        target=self._reset_radio_worker, daemon=True
+                    )
+                    self._reset_thread.start()
+                except Exception as exc:
+                    self._radio_reset_complete(str(exc))
+            else:
+                self._run_pending_operation()
+            return False
+        if phase == "failed-exited":
+            self._cleanup_proc()
+            self._finish_radio_operation()
+            self.set_status("Previous session has exited. Retry the operation.")
+            return False
+        if phase != self._stop_phase_shown:
+            self._stop_phase_shown = phase
+            if phase == "failed":
+                self._session_ready = None  # A failed request must never start later.
+                self.set_status(self.session_control.error)
+            elif phase == "terminating":
+                self.set_status("Stopping... SIGTERM sent; waiting for the process to exit.")
+        return phase in ("stopping", "terminating", "failed")
 
-        if not self._stop_launched_process():
-            return
-
+    def _reset_radio_worker(self):
+        error = ""
         try:
             self.reset_esp32()
-            self.set_status("Stopped. ESP32 ready.")
         except Exception as exc:
-            self.set_status(f"Stopped. ESP32 reset warning: {exc}")
+            error = str(exc)
+        GLib.idle_add(self._radio_reset_complete, error)
+
+    def _radio_reset_complete(self, error):
+        self._reset_thread = None
+        if error:
+            operation = self.session_control.operation
+            self._finish_radio_operation()
+            if operation == "stop":
+                self.set_status(f"Stopped. ESP32 reset warning: {error}")
+            else:
+                self.set_status(f"ESP32 reset failed: {error}. Operation not started.")
+        else:
+            self._run_pending_operation()
+        return False
+
+    def _run_pending_operation(self):
+        ready = self._session_ready
+        self._session_ready = None
+        self.session_control.mark_active()
+        try:
+            keep_reserved = bool(ready()) if ready is not None else False
+        except Exception as exc:
+            self.set_status(f"Could not start operation: {exc}")
+            keep_reserved = False
+        if not keep_reserved:
+            self._finish_radio_operation()
+
+    def _finish_radio_operation(self):
+        self._session_ready = None
+        self.session_control.finish()
+        self.esp32_busy = False
+        self._sync_radio_buttons()
+
+    def stop_current_session(self, *_):
+        def stopped():
+            self.set_status("Stopped. ESP32 ready.")
+            return False
+
+        self._request_radio_operation("stop", stopped)
 
     def launch(self, cmd, label, *, reset=True):
-        if not self._stop_launched_process():
-            self.set_status("Previous session is still running; new session not started.")
-            return
+        self._request_radio_operation(
+            "launch", lambda: self._launch_ready(cmd, label), reset=reset
+        )
 
-        if reset:
-            try:
-                self.reset_esp32()
-            except Exception as exc:
-                self.set_status(f"ESP32 reset failed: {exc}")
-                return
-
+    def _launch_ready(self, cmd, label):
         stamp = time.strftime("%Y%m%d-%H%M%S")
         logfile = LOG_DIR / f"{stamp}.log"
         self.proc_log = open(logfile, "w", encoding="utf-8")
         env = os.environ.copy()
         env["POKELDN_RADIO"] = self._radio_env()
-        self.proc = subprocess.Popen(
-            [str(x) for x in cmd],
-            cwd=str(REPO),
-            env=env,
-            stdout=self.proc_log,
-            stderr=subprocess.STDOUT,
-        )
+        try:
+            self.proc = subprocess.Popen(
+                [str(x) for x in cmd],
+                cwd=str(REPO),
+                env=env,
+                stdout=self.proc_log,
+                stderr=subprocess.STDOUT,
+            )
+        except Exception:
+            self.proc = None
+            self._cleanup_proc()
+            raise
         self.set_status(f"{label}  •  PID {self.proc.pid}")
-        GLib.timeout_add_seconds(1, self.poll_process)
+        GLib.timeout_add_seconds(1, self.poll_process, self.proc)
+        return False  # The running session can now be stopped or replaced.
 
-    def poll_process(self):
-        if not self.proc:
+    def poll_process(self, expected_proc):
+        if self.proc is not expected_proc:
             return False
         rc = self.proc.poll()
         if rc is None:
             return True
-        self.set_status("Session finished." if rc == 0 else f"Session ended with error {rc}. Check logs.")
+        if not self.session_control.busy:
+            self.set_status("Session finished." if rc == 0 else f"Session ended with error {rc}. Check logs.")
         self._cleanup_proc()
         return False
 
@@ -1150,6 +1217,8 @@ class TradeBox(Gtk.Application):
         self.showdown_editor("LEGENDS Z-A", "za", self.host_za, self.show_home)
 
     def host_za(self, button, view):
+        if self._radio_is_busy():
+            return
         text = text_of(view)
         if not text:
             self.set_status("Add or paste at least one Z-A Pokémon first.")
@@ -1199,6 +1268,8 @@ class TradeBox(Gtk.Application):
         )
 
     def host_bdsp_trade(self, button, view):
+        if self._radio_is_busy():
+            return
         text = text_of(view)
         if not text:
             self.set_status("Add or paste at least one BDSP Pokémon first.")
@@ -1268,6 +1339,8 @@ class TradeBox(Gtk.Application):
                              self.host_swsh_trade, self.show_swsh)
 
     def host_swsh_trade(self, button, view):
+        if self._radio_is_busy():
+            return
         text = text_of(view)
         if not text:
             self.set_status("Paste a Showdown set first.")
@@ -1319,6 +1392,8 @@ class TradeBox(Gtk.Application):
         self.win.set_child(box)
 
     def save_and_host_gift(self, gift, label):
+        if self._radio_is_busy():
+            return
         path = GIFT_DIR / "current-swsh.pokegift"
         gifts.save(str(path), gift)
         self.launch(
@@ -2338,6 +2413,8 @@ class TradeBox(Gtk.Application):
         )
 
     def host_frlg_trade(self, button, view):
+        if self._radio_is_busy():
+            return
         text = text_of(view)
         if not text:
             self.set_status("Add or paste at least one Gen III Pokémon first.")
@@ -2736,6 +2813,8 @@ class TradeBox(Gtk.Application):
         self.win.set_child(box)
 
     def _host_frlg_custom(self, state, label, filename):
+        if self._radio_is_busy():
+            return
         try:
             gift = frgift.compile(state)
         except Exception as exc:

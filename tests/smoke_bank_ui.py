@@ -1,7 +1,6 @@
 """Render the real GTK Bank pages at 800x480 under Xvfb; no backend or radio."""
 import copy
 import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -45,58 +44,67 @@ def main():
         GLib.idle_add(callback, result, "")
     app._bank_rpc = rpc
 
-    def check(name):
+    def check(name, expected_title):
         app.win.present()
         context = GLib.MainContext.default()
-        deadline = time.monotonic() + .25
+        deadline = time.monotonic() + 3
+        stable = 0
         while time.monotonic() < deadline:
             while context.pending():
                 context.iteration(False)
-            time.sleep(.01)
+            root = app.win.get_child()
+            scrolled = []
+            def walk(widget):
+                if isinstance(widget, Gtk.ScrolledWindow) and widget.get_visible():
+                    scrolled.append(widget.get_height())
+                child = widget.get_first_child()
+                while child is not None:
+                    walk(child)
+                    child = child.get_next_sibling()
+            walk(root)
+            ready = (root.get_mapped() and app._current_page_title.startswith(expected_title)
+                     and all(height >= 60 for height in scrolled))
+            stable = stable + 1 if ready else 0
+            if stable >= 3:
+                break
+            time.sleep(.02)
         width, height = app.win.get_width(), app.win.get_height()
+        if not app._current_page_title.startswith(expected_title):
+            raise AssertionError(f"{name} did not open: {app._current_page_title}")
         if width > 800 or height > 480:
             raise AssertionError(f"{name} forces a {width}x{height} window")
-        scrolled = []
-        def walk(widget):
-            if isinstance(widget, Gtk.ScrolledWindow):
-                scrolled.append(widget.get_height())
-            child = widget.get_first_child()
-            while child is not None:
-                walk(child)
-                child = child.get_next_sibling()
-        walk(app.win.get_child())
         if scrolled and min(scrolled) < 60:
-            raise AssertionError(f"{name} leaves too little scrolling space: {scrolled}")
+            raise AssertionError(f"{name} leaves too little scrolling space: {scrolled}; root={root.get_width()}x{root.get_height()}, mapped={root.get_mapped()}")
         print(f"OK: {name}, {width}x{height}, scroll={scrolled}")
 
     app.show_home()
-    check("Home")
+    check("Home", "POK")
     app.show_bank()
-    check("Bank with 1000 records")
+    check("Bank with 1000 records", "POKEMON BANK")
     app.bank_choose_game()
-    check("Game selection")
+    check("Game selection", "BANK DESTINATION")
     app.bank_choose_import()
-    check("Import trainer confirmation")
+    check("Import trainer confirmation", "BANK IMPORT")
     app.bank_import("main")
-    check("Import results")
+    check("Import results", "IMPORT RESULTS")
     app.bank_details(entries[0])
-    check("Record and conversion details")
+    check("Record and conversion details", "BANK POKEMON")
     app.bank_confirm_remove(entries[0])
-    check("Deletion confirmation")
+    check("Deletion confirmation", "DELETE BANK COPY")
     app.bank_queue = entries[:6]
     app.show_bank_queue()
-    check("Six-slot queue")
+    check("Six-slot queue", "BANK QUEUE")
     app.bank_prepare_trade()
-    check("Converted offer confirmation")
+    check("Converted offer confirmation", "CONFIRM BANK TRADE")
     app.show_bank_queue()
-    check("Prepared queue and cancellation controls")
+    check("Prepared queue and cancellation controls", "BANK QUEUE")
     app.bank_cancel_prepared()
-    check("Cancelled queue")
+    check("Cancelled queue", "BANK QUEUE")
     app.bank_pending = [{"token": "c" * 32, "game": "za", "pid": None, "live": False}]
     app.show_bank()
-    check("Unfinished run")
+    check("Unfinished run", "POKEMON BANK")
     app.bank_confirm_recover(app.bank_pending[0])
-    check("Recovery confirmation")
+    check("Recovery confirmation", "RECONCILE BANK RUN")
     app.win.destroy()
     app.quit()
 

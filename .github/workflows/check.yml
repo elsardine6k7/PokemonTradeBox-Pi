@@ -30,4 +30,5 @@ jobs:
           GDK_BACKEND: x11
           GSK_RENDERER: cairo
           NO_AT_BRIDGE: '1'
-        run: dbus-run-session -- xvfb-run -a /usr/bin/python3 tests/smoke_bank_ui.py
+          GTK_A11Y: none
+        run: dbus-run-session -- xvfb-run -a /usr/bin/python3 -u tests/smoke_bank_ui.py

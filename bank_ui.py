@@ -20,6 +20,7 @@ class BankUI:
         self._bank_config = None
         self._bank_available = False
         self._bank_busy = False
+        self._bank_cancel_allowed = False
         self._bank_run = None
         self._bank_finish_pending = False
         self.bank_entries, self.bank_queue, self.bank_pending = [], [], []
@@ -56,10 +57,12 @@ class BankUI:
         if not self._bank_available or not self._bank_editable():
             return False
         self._bank_busy = True
+        self._bank_cancel_allowed = action not in ("recover", "remove")
         self.set_status("Working on the Bank...")
 
         def done(result, error):
             self._bank_busy = False
+            self._bank_cancel_allowed = False
             if error:
                 self.set_status(f"Bank: {error}")
                 self.show_bank()
@@ -99,7 +102,7 @@ class BankUI:
         toolbar.append(self._bank_button(f"QUEUE ({len(self.bank_queue)}/6)", self.show_bank_queue))
         box.append(toolbar)
         box.append(self._bank_button(f"TRADE INTO: {self._bank_target_name()}", self.bank_choose_game, enabled=available))
-        if self._bank_busy:
+        if self._bank_busy and self._bank_cancel_allowed:
             box.append(self._bank_button("CANCEL BANK WORK", self.bank_cancel_work))
         if self._bank_run is not None and self._bank_run.get("error"):
             box.append(self._bank_button("RETRY BANK FINISH", self.bank_retry_finish))
@@ -233,7 +236,7 @@ class BankUI:
             self.show_bank()
 
     def bank_cancel_work(self, *_):
-        if self._bank_busy and self._bank_run is None and self._bank_client is not None:
+        if self._bank_busy and self._bank_cancel_allowed and self._bank_run is None and self._bank_client is not None:
             self._bank_client.cancel()
             self.set_status("Cancelling Bank work. Refresh afterwards; imports may be partial.")
 
@@ -256,8 +259,9 @@ class BankUI:
             box = self._bank_message("BANK POKEMON", text, self.show_bank)
             box.append(self._bank_button("ADD TO QUEUE", lambda *_: self.bank_enqueue(entry), enabled=bool(route.get("ok"))))
             box.append(self._bank_button("DELETE BANK COPY", lambda *_: self.bank_confirm_remove(entry)))
-        self._bank_action("details", {"id": entry["id"], "game": self.bank_game,
-                                      "trainer": self._bank_config["trainers"][self.bank_game]}, ready)
+        if self._bank_action("details", {"id": entry["id"], "game": self.bank_game,
+                                      "trainer": self._bank_config["trainers"][self.bank_game]}, ready):
+            self.show_bank()
 
     def bank_enqueue(self, entry):
         if not self._bank_editable():

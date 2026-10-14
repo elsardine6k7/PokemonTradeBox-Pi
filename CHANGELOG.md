@@ -12,7 +12,7 @@
 - added startup-check results and a rerun button to Settings; cached species counts keep this page from making blocking health requests
 - made the installer respect pokeldn_repo and POKEMON_TRADEBOX_CONFIG, preserving existing configuration
 - added configuration, backend, Retry, disconnect, timeout-cleanup, and configured-path installer regression tests
-- Pi touchscreen validation is pending
+- Rick confirmed the Pi's Settings/startup status, offline team editing with the ESP32 disconnected, and reconnecting to trade, STOP, and start another trade
 
 ## v0.4.2
 

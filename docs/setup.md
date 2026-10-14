@@ -130,7 +130,9 @@ STOP and ESP32 reset were confirmed working on the Pi. Use this checklist to fur
 
 These first checks do not require reflashing the ESP32. Flashing uses the same reservation and retains its existing explicit confirmation screen. The automated tests exercise failed-stop, reset, and process-start paths without using a real device.
 
-## v0.4.3 Pi test checklist (pending)
+## v0.4.3 Pi test checklist
+
+Rick confirmed Settings/startup status, offline team editing with the ESP32 disconnected, and reconnecting to trade, STOP, and start another trade on October 14, 2026. Config repair through Retry and custom-path installation have automated coverage; the optional manual checks below remain available.
 
 1. With the ESP32 connected, launch TradeBox and confirm it reaches Home. Open Settings; check the version, API, and the four PKHeX catalog counts.
 2. Stop any host, unplug the ESP32, and tap **RUN STARTUP CHECKS**. Confirm the warning offers **OPEN TRADEBOX**. Open a team builder and edit a slot; trying to host should report the missing ESP32.

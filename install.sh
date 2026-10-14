@@ -4,19 +4,15 @@ APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 AUTOSTART=0
 if [[ "${1:-}" == "--autostart" ]]; then AUTOSTART=1; fi
 mkdir -p "$APP_DIR/logs" "$APP_DIR/gifts"
-if [[ ! -f "$APP_DIR/config.json" ]]; then
-  cp "$APP_DIR/config.example.json" "$APP_DIR/config.json"
-  echo "Created $APP_DIR/config.json"
+CONFIG_PATH="$(python3 -c 'import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); from startup_checks import config_path; print(config_path(Path(sys.argv[1])))' "$APP_DIR")"
+if [[ ! -e "$CONFIG_PATH" ]]; then
+  mkdir -p "$(dirname "$CONFIG_PATH")"
+  cp "$APP_DIR/config.example.json" "$CONFIG_PATH"
+  echo "Created $CONFIG_PATH"
 fi
 chmod +x "$APP_DIR/tradebox.py" "$APP_DIR/start-tradebox.sh" "$APP_DIR/esp32_manager.py"
-python3 -m py_compile "$APP_DIR/tradebox.py" "$APP_DIR/esp32_manager.py" "$APP_DIR/session_control.py"
-if [[ ! -d "$HOME/pokeldn" ]]; then echo "WARNING: ~/pokeldn was not found. Install pokeldn first or edit config.json."; fi
-if [[ -x "$HOME/pokeldn/.venv/bin/python" ]]; then
-  if ! "$HOME/pokeldn/.venv/bin/python" -c 'import esptool' >/dev/null 2>&1; then
-    echo "WARNING: esptool is missing from the pokeldn venv."
-    echo "Install it with: ~/pokeldn/.venv/bin/python -m pip install esptool==5.4.0"
-  fi
-fi
+python3 -m py_compile "$APP_DIR/tradebox.py" "$APP_DIR/esp32_manager.py" "$APP_DIR/session_control.py" "$APP_DIR/startup_checks.py"
+python3 "$APP_DIR/startup_checks.py" --config "$CONFIG_PATH" --frontend-python /usr/bin/python3
 if [[ "$AUTOSTART" -eq 1 ]]; then
   mkdir -p "$HOME/.config/labwc"
   AUTOSTART_FILE="$HOME/.config/labwc/autostart"
@@ -27,5 +23,5 @@ if [[ "$AUTOSTART" -eq 1 ]]; then
 fi
 echo
 echo "Install check complete."
-echo "Next: edit $APP_DIR/config.json with your trainer IDs and paths."
+echo "Config: $CONFIG_PATH"
 echo "Run: $APP_DIR/start-tradebox.sh"

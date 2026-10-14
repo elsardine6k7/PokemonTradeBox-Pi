@@ -196,6 +196,23 @@ class StartupChecksTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("PKHeX missing", result["error"])
 
+    def test_frontend_does_not_require_full_catalog_dependencies_but_backend_still_checks_api(self):
+        repo = Path(self.cfg["pokeldn_repo"])
+        fake_backend(repo)
+        (repo / "pokeldn/plugins.py").write_text(
+            "raise ModuleNotFoundError(\"No module named 'Crypto'\", name='Crypto')\n", encoding="utf-8")
+        frontend = run_probe(Path(sys.executable), repo, pkhex=False)
+        self.assertTrue(frontend["ok"], frontend)
+        backend = run_probe(Path(sys.executable), repo, pkhex=True)
+        self.assertFalse(backend["ok"])
+        self.assertIn("Crypto", backend["error"])
+        # Real builder dependency failures must still block the touchscreen.
+        with (repo / "pokeldn/gifts.py").open("a", encoding="utf-8") as fh:
+            fh.write("\nraise ModuleNotFoundError('Builder dependency missing')\n")
+        frontend = run_probe(Path(sys.executable), repo, pkhex=False)
+        self.assertFalse(frontend["ok"])
+        self.assertIn("Builder dependency missing", frontend["error"])
+
     @unittest.skipUnless(os.name == "posix", "Pi process-group cleanup uses POSIX")
     def test_hung_probe_cleans_only_its_own_helper_and_leaves_other_processes_running(self):
         repo = Path(self.cfg["pokeldn_repo"])

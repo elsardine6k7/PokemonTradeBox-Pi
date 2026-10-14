@@ -4,7 +4,8 @@
 
 - opened the touchscreen before loading configuration or PokeLDN dependencies
 - added startup diagnostics and Retry for invalid JSON, trainer values, missing checkout/venv, incompatible PokeLDN/API versions, and failed PKHeX health checks
-- checked both the configured PokeLDN venv and the touchscreen's Python against Program Surface 1.3, without loading user plugins
+- checked API compatibility in the configured PokeLDN venv and required builder imports in the touchscreen's Python, without loading user plugins
+- avoided importing the full tool catalog into touchscreen diagnostics, which incorrectly required unrelated dependencies such as Crypto
 - bounded PKHeX diagnostics in a separate process; timeout cleanup targets only that diagnostic and its own helper
 - kept builders available with warnings when keys, serial tools, firmware tools, or the ESP32 are missing
 - checked keys only for hosts that need them, and rechecked radio/key availability before stopping and before starting a replacement host

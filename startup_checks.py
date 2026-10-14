@@ -189,12 +189,17 @@ def probe_backend(repo: Path, *, pkhex: bool) -> dict:
         match = re.match(r"^(\d+)\.(\d+)\.(\d+)", version)
         if not match or tuple(map(int, match.groups())) < (0, 23, 0):
             raise ValueError(f"PokeLDN {version} is unsupported. Install v0.23.0 or newer.")
-        api = importlib.import_module("pokeldn.plugins").API
-        if api.version != 1 or api.level < 3:
-            raise ValueError(f"Program Surface {api.version}.{api.level} is unsupported. TradeBox requires API major 1, level 3 or newer.")
+        # API metadata imports the full tool catalog and its radio/game
+        # dependencies. Validate it in the backend venv; the touchscreen uses
+        # this same checkout, but only imports the builder surface below.
+        if pkhex:
+            api = importlib.import_module("pokeldn.plugins").API
+            if api.version != 1 or api.level < 3:
+                raise ValueError(f"Program Surface {api.version}.{api.level} is unsupported. TradeBox requires API major 1, level 3 or newer.")
+            result["api"] = f"{api.version}.{api.level}"
         for module, names in SURFACE.items():
             _surface(module, names)
-        result.update(ok=True, version=version, api=f"{api.version}.{api.level}")
+        result.update(ok=True, version=version)
     except Exception as exc:
         result["error"] = f"PokeLDN import/API check failed ({type(exc).__name__}): {exc}"
         return result
@@ -282,8 +287,12 @@ def check_startup(path: Path, app_dir: Path, *, runner=run_probe, frontend_pytho
                 result = runner(executable, repo, pkhex=pkhex)
             except (OSError, ValueError) as exc:
                 result = {"ok": False, "error": f"Cannot run diagnostic: {exc}"}
-            report.checks.append(Check(label, "ok" if result["ok"] else "error",
-                f"PokeLDN {result.get('version')}, API {result.get('api')}" if result["ok"] else result["error"]))
+            if result["ok"]:
+                detail = f"PokeLDN {result.get('version')}, API {result.get('api')}" if pkhex else (
+                    f"PokeLDN {result.get('version')}; required builders imported successfully.")
+            else:
+                detail = result["error"]
+            report.checks.append(Check(label, "ok" if result["ok"] else "error", detail))
             if pkhex:
                 venv_serial_ready = result.get("serial_ready", False)
                 report.version = result.get("version", "Unknown")

@@ -16,6 +16,7 @@ import unittest
 from pathlib import Path
 
 from session_control import SessionControl
+from bank_ui import BankUI
 from startup_checks import Check, StartupReport, check_startup, key_problem
 from test_session_control import Clock, Process
 
@@ -90,6 +91,7 @@ class TradeBoxOperationTests(unittest.TestCase):
             "Gtk": types.SimpleNamespace(Application=Application),
             "GLib": self.scheduler,
             "SessionControl": SessionControl,
+            "BankUI": BankUI,
             "threading": self.worker_module,
             "subprocess": types.SimpleNamespace(Popen=spawn, PIPE=-1, STDOUT=-2),
             "Path": Path, "os": os, "json": json, "time": time,

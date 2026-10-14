@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 
 from session_control import SessionControl
+from bank_ui import BankUI
 from startup_checks import (
     DEFAULT_CONFIG, Check, StartupReport, check_startup, config_path,
     find_radio, key_problem, radio_problem,
@@ -28,7 +29,7 @@ from startup_checks import (
 
 HOME = Path.home()
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.4.3"
+APP_VERSION = "0.5.0"
 CONFIG_PATH = config_path(APP_DIR)
 
 # Harmless placeholders until the window is visible and startup checks pass.
@@ -94,7 +95,7 @@ def entry_int(entry: Gtk.Entry, default=0) -> int:
     return int(raw) if raw else default
 
 
-class TradeBox(Gtk.Application):
+class TradeBox(BankUI, Gtk.Application):
     def __init__(self):
         super().__init__(application_id="com.rick.pokemontradebox")
         self.win = None
@@ -116,6 +117,7 @@ class TradeBox(Gtk.Application):
         self.startup_report = None
         self._startup_busy = False
         self._backend_ready = False
+        self._init_bank(APP_DIR, Gtk, GLib)
 
     def do_activate(self):
         if self.win is not None:
@@ -162,6 +164,9 @@ class TradeBox(Gtk.Application):
 
     def run_startup_checks(self, *_):
         if self._startup_busy:
+            return
+        if self._bank_run is not None:
+            self.set_status("Finish or cancel the Bank run before rerunning startup checks.")
             return
         if self._radio_is_busy() or (self.proc is not None and self.proc.poll() is None):
             self.set_status("Stop the active session before rerunning startup checks.")
@@ -220,6 +225,7 @@ class TradeBox(Gtk.Application):
             FRLG_VERSION = CONFIG["frlg_version"]
             TRAINERS = CONFIG["trainers"]
             gifts, pokemon, swgift, frgift, swevents = modules
+            self._configure_bank(CONFIG, report.bank_ready)
             self.name_cache.clear()
             self.set_status("Ready. Check Settings for startup warnings." if report.warnings else "Ready.")
             if not report.warnings:
@@ -245,12 +251,19 @@ class TradeBox(Gtk.Application):
         return True
 
     def _close_requested(self, *_):
+        if self._bank_run is not None and self._bank_run.get("error") and (
+                self.proc is None or self.proc.poll() is not None):
+            return False  # Its receipt/log will be reconciled on the next start.
         if self._radio_is_busy():
             return True
         if self.proc is not None and self.proc.poll() is None:
             self._request_radio_operation("stop", lambda: self.quit())
             return True
         return False
+
+    def do_shutdown(self):
+        self._bank_shutdown()
+        Gtk.Application.do_shutdown(self)
 
     def _install_touch_scrollbar_css(self):
         provider = Gtk.CssProvider()
@@ -308,6 +321,7 @@ class TradeBox(Gtk.Application):
     # ---------- common UI ----------
 
     def page(self, title: str, back_cb=None):
+        self._current_page_title = title
         # Compact layout for an 800x480 touchscreen.
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
         outer.set_margin_top(4)
@@ -341,6 +355,7 @@ class TradeBox(Gtk.Application):
 
         self.status = Gtk.Label(label=self.current_label)
         self.status.set_wrap(True)
+        self.status.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
         outer.append(self.status)
         return outer
 
@@ -367,6 +382,7 @@ class TradeBox(Gtk.Application):
         box.append(self.button("SWORD / SHIELD", self.show_swsh))
         box.append(self.button("BRILLIANT DIAMOND / SHINING PEARL", self.show_bdsp))
         box.append(self.button("FIRE RED / LEAF GREEN", self.show_frlg))
+        box.append(self.button("POKEMON BANK", self.bank_open))
         box.append(self.button("ESP32 / FIRMWARE", self.show_esp32))
         box.append(self.button("SETTINGS", self.show_settings))
         self.win.set_child(box)
@@ -428,8 +444,15 @@ class TradeBox(Gtk.Application):
         self._set_esp32_buttons(enabled)
         if self.stop_button is not None:
             self.stop_button.set_sensitive(enabled)
+        self._bank_refresh_controls()
 
     def _radio_is_busy(self):
+        if self._bank_busy or self._bank_finish_pending:
+            self.set_status("Bank work is in progress. Wait for it to finish.")
+            return True
+        if self._bank_run is not None and self._bank_run["state"] == "prepared":
+            self.set_status("Confirm or cancel the prepared Bank trade first.")
+            return True
         if not self.session_control.busy:
             return False
         if self.session_control.phase == "failed":
@@ -699,6 +722,8 @@ class TradeBox(Gtk.Application):
     def _poll_radio_operation(self):
         phase = self.session_control.poll()
         if phase == "ready":
+            if not self._bank_finish_if_needed(self.proc):
+                return True
             self._cleanup_proc()
             if self._session_reset:
                 self.session_control.mark_resetting()
@@ -714,6 +739,8 @@ class TradeBox(Gtk.Application):
                 self._run_pending_operation()
             return False
         if phase == "failed-exited":
+            if not self._bank_finish_if_needed(self.proc):
+                return True
             self._cleanup_proc()
             self._finish_radio_operation()
             self.set_status("Previous session has exited. Retry the operation.")
@@ -780,13 +807,13 @@ class TradeBox(Gtk.Application):
             "launch", lambda: self._launch_ready(cmd, label), reset=reset
         )
 
-    def _launch_ready(self, cmd, label):
+    def _launch_ready(self, cmd, label, *, logfile=None):
         # The board or keys may disappear while the previous session stops.
         if not self._host_prerequisites(cmd):
             return False
         stamp = time.strftime("%Y%m%d-%H%M%S")
-        logfile = LOG_DIR / f"{stamp}.log"
-        self.proc_log = open(logfile, "w", encoding="utf-8")
+        logfile = logfile or LOG_DIR / f"{stamp}.log"
+        self.proc_log = open(logfile, "a", encoding="utf-8")
         env = os.environ.copy()
         env["POKELDN_RADIO"] = self._radio_env()
         try:
@@ -810,6 +837,8 @@ class TradeBox(Gtk.Application):
             return False
         rc = self.proc.poll()
         if rc is None:
+            return True
+        if not self._bank_finish_if_needed(expected_proc):
             return True
         if not self.session_control.busy:
             self.set_status("Session finished." if rc == 0 else f"Session ended with error {rc}. Check logs.")

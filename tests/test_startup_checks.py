@@ -196,6 +196,24 @@ class StartupChecksTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("PKHeX missing", result["error"])
 
+    def test_bank_capability_is_optional_for_old_backend_and_detected_for_api_14(self):
+        repo = Path(self.cfg["pokeldn_repo"])
+        fake_backend(repo, version="0.24.0", api=(1, 4))
+        missing = run_probe(Path(sys.executable), repo, pkhex=True)
+        self.assertTrue(missing["ok"])
+        self.assertFalse(missing.get("bank_ready", False))
+        app = repo / "pokeldn/app"
+        app.mkdir(exist_ok=True)
+        (app / "__init__.py").touch()
+        (app / "bank.py").write_text(
+            "class TradeSession:\n    def advance(self, count): pass\n"
+            + "\n".join(f"def {name}(*a, **kw): pass" for name in
+                ("entries", "find", "import_file", "destinations", "offer", "remove")), encoding="utf-8")
+        (app / "received.py").write_text("def trades_done(line): pass\n", encoding="utf-8")
+        supported = run_probe(Path(sys.executable), repo, pkhex=True)
+        self.assertTrue(supported["ok"])
+        self.assertTrue(supported["bank_ready"])
+
     def test_frontend_does_not_require_full_catalog_dependencies_but_backend_still_checks_api(self):
         repo = Path(self.cfg["pokeldn_repo"])
         fake_backend(repo)
@@ -246,7 +264,8 @@ class StartupChecksTests(unittest.TestCase):
         app.mkdir()
         source = Path(__file__).resolve().parents[1]
         for name in ("install.sh", "startup_checks.py", "config.example.json", "tradebox.py",
-                     "session_control.py", "esp32_manager.py", "start-tradebox.sh"):
+                     "session_control.py", "esp32_manager.py", "start-tradebox.sh",
+                     "bank_backend.py", "bank_client.py", "bank_ui.py"):
             shutil.copyfile(source / name, app / name)
         env = dict(os.environ, POKEMON_TRADEBOX_CONFIG=str(self.path), HOME=str(self.root / "unrelated-home"))
         result = subprocess.run(["bash", str(app / "install.sh")], cwd=self.root, env=env,

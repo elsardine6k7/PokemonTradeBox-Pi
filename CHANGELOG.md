@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.5.0
+
+- added a touchscreen Bank using PokeLDN's documented API 1.4
+- imported Pokemon files and saves without changing their sources, with duplicate/refusal counts and conversion notes
+- added paginated browsing/search, destination checks, and explicit Bank-copy deletion
+- added a six-slot ordered Bank queue for Z-A, Sword/Shield, BDSP, and FR/LG, with converted-offer confirmation before hosting
+- preserved banked Pokemon identities by omitting --fresh-pid and using the native launcher flags
+- removed Bank records only through TradeSession.advance() from confirmed launcher completion lines; stopped the host after the queue completes
+- drained final confirmations before resetting or replacing a Bank host, preserving uncompleted records on STOP
+- isolated Bank work in the backend venv and a separate Bank folder, with a single-writer lock
+- saved run receipts and logs for explicit reconciliation after interrupted workers or app restarts
+- ignored stale callbacks and refused reconciliation while the recorded host is still alive
+- kept the other TradeBox tools available on API 1.3; Bank requires API 1.4
+- added Bank, callback, worker, and 800x480 GTK layout checks; Pi hardware validation is pending
+
 ## v0.4.3
 
 - opened the touchscreen before loading configuration or PokeLDN dependencies

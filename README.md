@@ -1,6 +1,6 @@
 # PokemonTradeBox-Pi
 
-**Current version: v0.4.2**
+**Current version: v0.4.3**
 
 Touchscreen Raspberry Pi frontend for [pokeldn](https://github.com/Decryptu/pokeldn).
 
@@ -22,13 +22,14 @@ Portable 800×480 Raspberry Pi trade-box UI with touch-friendly Pokémon buildin
 - ESP32 reset/status handling
 - responsive STOP and exclusive radio operations during shutdown, reset, and firmware work
 - pokeldn / PKHeX status page
+- startup diagnostics with Retry, offline editing when the ESP32 is disconnected, and configured-path install checks
 - Labwc autostart helper
 
 The original setup was tested on a Raspberry Pi 4, an 800×480 DSI touchscreen, and a CP2102 ESP32 radio. The custom FR/LG Wonder Card builder has been tested end-to-end in-game, and the v0.4.0 ESP32 firmware manager was tested end-to-end on a classic ESP32/CP2102, including downloading, verifying, flashing, and re-checking official pokeldn radio firmware.
 
 ## Requirements
 
-Install and verify [pokeldn](https://github.com/Decryptu/pokeldn) **v0.23.0 or newer** first. TradeBox v0.4.2 relies on pokeldn's Program Surface 1.3, including native Sword/Shield gift Nature support. The default config expects pokeldn at `~/pokeldn`.
+Install and verify [pokeldn](https://github.com/Decryptu/pokeldn) **v0.23.0 or newer** first. TradeBox v0.4.3 relies on pokeldn's Program Surface 1.3, including native Sword/Shield gift Nature support. The default config expects pokeldn at `~/pokeldn`.
 
 You must provide your own compatible hardware, `prod.keys`, and trainer metadata. This repository does not contain console keys, ROMs, saves, or Nintendo game data.
 

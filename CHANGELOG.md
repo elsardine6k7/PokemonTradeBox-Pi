@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.4.3
+
+- opened the touchscreen before loading configuration or PokeLDN dependencies
+- added startup diagnostics and Retry for invalid JSON, trainer values, missing checkout/venv, incompatible PokeLDN/API versions, and failed PKHeX health checks
+- checked API compatibility in the configured PokeLDN venv and required builder imports in the touchscreen's Python, without loading user plugins
+- avoided importing the full tool catalog into touchscreen diagnostics, which incorrectly required unrelated dependencies such as Crypto
+- bounded PKHeX diagnostics in a separate process; timeout cleanup targets only that diagnostic and its own helper
+- kept builders available with warnings when keys, serial tools, firmware tools, or the ESP32 are missing
+- checked keys only for hosts that need them, and rechecked radio/key availability before stopping and before starting a replacement host
+- added startup-check results and a rerun button to Settings; cached species counts keep this page from making blocking health requests
+- made the installer respect pokeldn_repo and POKEMON_TRADEBOX_CONFIG, preserving existing configuration
+- added configuration, backend, Retry, disconnect, timeout-cleanup, and configured-path installer regression tests
+- Rick confirmed the Pi's Settings/startup status, offline team editing with the ESP32 disconnected, and reconnecting to trade, STOP, and start another trade
+
 ## v0.4.2
 
 - made STOP respond immediately while GTK timers monitor the exact launcher PID

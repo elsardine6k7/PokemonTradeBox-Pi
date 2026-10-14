@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import gi
-gi.require_version("Gtk", "4.0")
-from gi.repository import Gtk, GLib, Pango, Gdk
+try:
+    import gi
+    gi.require_version("Gtk", "4.0")
+    from gi.repository import Gtk, GLib, Pango, Gdk
+except (ImportError, ValueError):
+    raise SystemExit("TradeBox needs GTK4: sudo apt install python3-gi gir1.2-gtk-4.0") from None
 
 import copy
+import importlib
 import json
 import os
 import subprocess
@@ -17,46 +21,18 @@ import time
 from pathlib import Path
 
 from session_control import SessionControl
+from startup_checks import (
+    DEFAULT_CONFIG, Check, StartupReport, check_startup, config_path,
+    find_radio, key_problem, radio_problem,
+)
 
 HOME = Path.home()
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.4.2"
-CONFIG_PATH = Path(
-    os.environ.get("POKEMON_TRADEBOX_CONFIG", str(APP_DIR / "config.json"))
-).expanduser()
+APP_VERSION = "0.4.3"
+CONFIG_PATH = config_path(APP_DIR)
 
-DEFAULT_CONFIG = {
-    "pokeldn_repo": "~/pokeldn",
-    "prod_keys": "~/.switch/prod.keys",
-    "radio": "auto",
-    "frlg_version": "firered",
-    "trainers": {
-        "za": {"ot": "PLAYER", "tid": 0, "sid": 0, "language": 2, "gender": 0},
-        "swsh": {"ot": "PLAYER", "tid": 0, "sid": 0, "language": 2, "gender": 0},
-        "bdsp": {"ot": "PLAYER", "tid": 0, "sid": 0, "language": 2, "gender": 0},
-        "frlg": {"ot": "PLAYER", "tid": 0, "sid": 0, "language": 2, "gender": 0},
-    },
-}
-
-
-def load_config():
-    cfg = copy.deepcopy(DEFAULT_CONFIG)
-    if CONFIG_PATH.exists():
-        with CONFIG_PATH.open("r", encoding="utf-8") as fh:
-            user = json.load(fh)
-
-        for key in ("pokeldn_repo", "prod_keys", "radio", "frlg_version"):
-            if key in user:
-                cfg[key] = user[key]
-
-        trainers = user.get("trainers") or {}
-        for game in cfg["trainers"]:
-            if isinstance(trainers.get(game), dict):
-                cfg["trainers"][game].update(trainers[game])
-    return cfg
-
-
-CONFIG = load_config()
+# Harmless placeholders until the window is visible and startup checks pass.
+CONFIG = copy.deepcopy(DEFAULT_CONFIG)
 REPO = Path(str(CONFIG["pokeldn_repo"])).expanduser()
 PYTHON = REPO / ".venv" / "bin" / "python"
 KEYS = Path(str(CONFIG["prod_keys"])).expanduser()
@@ -65,14 +41,7 @@ FRLG_VERSION = str(CONFIG.get("frlg_version") or "firered").lower()
 
 LOG_DIR = APP_DIR / "logs"
 GIFT_DIR = APP_DIR / "gifts"
-LOG_DIR.mkdir(parents=True, exist_ok=True)
-GIFT_DIR.mkdir(parents=True, exist_ok=True)
-
-sys.path.insert(0, str(REPO))
-from pokeldn import gifts, pokemon
-from pokeldn.swsh import gift_builder as swgift
-from pokeldn.frlg.gift import builder as frgift
-from pokeldn.swsh import events as swevents
+gifts = pokemon = swgift = frgift = swevents = None
 
 TRAINERS = CONFIG["trainers"]
 
@@ -144,16 +113,136 @@ class TradeBox(Gtk.Application):
         self._session_reset = True
         self._stop_phase_shown = ""
         self._reset_thread = None
+        self.startup_report = None
+        self._startup_busy = False
+        self._backend_ready = False
 
     def do_activate(self):
+        if self.win is not None:
+            self.win.present()
+            return
         self._install_touch_scrollbar_css()
         self.win = Gtk.ApplicationWindow(application=self)
         self.win.connect("close-request", self._close_requested)
         self.win.set_title("Pokemon Trade Box")
         self.win.set_decorated(False)
         self.win.maximize()
-        self.show_home()
         self.win.present()
+        self.run_startup_checks()
+
+    # ---------- startup / recovery ----------
+
+    def show_startup(self):
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        for side in ("top", "bottom", "start", "end"):
+            getattr(outer, f"set_margin_{side}")(8)
+        title = Gtk.Label(label=f"TRADEBOX v{APP_VERSION} - STARTUP CHECKS")
+        outer.append(title)
+        sc = self.touch_scrolled_window()
+        sc.set_vexpand(True)
+        text = "Checking configuration, PokeLDN, and PKHeX..."
+        if not self._startup_busy and self.startup_report is not None:
+            text = self.startup_report.text()
+        info = Gtk.Label(label=f"Config: {CONFIG_PATH}\n\n{text}", xalign=0)
+        info.set_wrap(True)
+        info.set_selectable(True)
+        sc.set_child(info)
+        outer.append(sc)
+        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        actions.set_vexpand(False)
+        actions.set_size_request(-1, 48)
+        retry = self.button("RETRY", self.run_startup_checks)
+        retry.set_sensitive(not self._startup_busy)
+        actions.append(retry)
+        if self._backend_ready and not self._startup_busy:
+            actions.append(self.button("OPEN TRADEBOX", self.show_home))
+        actions.append(self.button("EXIT", lambda *_: self.quit()))
+        outer.append(actions)
+        self.win.set_child(outer)
+
+    def run_startup_checks(self, *_):
+        if self._startup_busy:
+            return
+        if self._radio_is_busy() or (self.proc is not None and self.proc.poll() is None):
+            self.set_status("Stop the active session before rerunning startup checks.")
+            return
+        self._startup_busy = True
+        self._backend_ready = False
+        self.show_startup()
+        try:
+            threading.Thread(target=self._startup_worker, daemon=True).start()
+        except Exception as exc:
+            self._startup_complete(StartupReport(checks=[Check("Startup", "error", str(exc))]), None)
+
+    def _startup_worker(self):
+        modules = None
+        try:
+            report = check_startup(CONFIG_PATH, APP_DIR)
+            if report.ready:
+                modules = self._load_backend(report.config)
+        except Exception as exc:
+            report = StartupReport(checks=[Check("Startup", "error",
+                f"Cannot load TradeBox dependencies: {exc}. Fix the installation, then tap Retry.")])
+        GLib.idle_add(self._startup_complete, report, modules)
+
+    def _load_backend(self, config):
+        repo = Path(config["pokeldn_repo"])
+        existing = sys.modules.get("pokeldn")
+        if existing is not None:
+            # Retry also picks up repaired/updated files in the same checkout.
+            # Close the idle service before discarding cached backend modules;
+            # this runs off the GTK thread, after active sessions are refused.
+            old_pokemon = sys.modules.get("pokeldn.pokemon")
+            if old_pokemon is not None:
+                old_pokemon.SERVICE.close()
+            for name in list(sys.modules):
+                if name == "pokeldn" or name.startswith("pokeldn.") or name == "gui" or name.startswith("gui."):
+                    del sys.modules[name]
+        sys.path.insert(0, str(repo))
+        importlib.invalidate_caches()
+        return tuple(importlib.import_module(name) for name in (
+            "pokeldn.gifts", "pokeldn.pokemon", "pokeldn.swsh.gift_builder",
+            "pokeldn.frlg.gift.builder", "pokeldn.swsh.events",
+        ))
+
+    def _startup_complete(self, report, modules):
+        global CONFIG, REPO, PYTHON, KEYS, RADIO, FRLG_VERSION, TRAINERS
+        global gifts, pokemon, swgift, frgift, swevents
+        self._startup_busy = False
+        self.startup_report = report
+        self._backend_ready = report.ready and modules is not None
+        if self._backend_ready:
+            CONFIG = report.config
+            REPO = Path(CONFIG["pokeldn_repo"])
+            PYTHON = REPO / ".venv" / "bin" / "python"
+            KEYS = Path(CONFIG["prod_keys"])
+            RADIO = CONFIG["radio"]
+            FRLG_VERSION = CONFIG["frlg_version"]
+            TRAINERS = CONFIG["trainers"]
+            gifts, pokemon, swgift, frgift, swevents = modules
+            self.name_cache.clear()
+            self.set_status("Ready. Check Settings for startup warnings." if report.warnings else "Ready.")
+            if not report.warnings:
+                self.show_home()
+                return False
+        self.show_startup()
+        return False
+
+    def _host_prerequisites(self, cmd):
+        if not self._backend_ready or self._startup_busy:
+            self.set_status("Startup checks must pass before hosting. Tap Retry on the startup screen.")
+            return False
+        if self.startup_report is not None and not self.startup_report.serial_ready:
+            self.set_status("Radio tools need pyserial in touchscreen Python and the PokeLDN venv. Fix the serial warnings, then rerun startup checks.")
+            return False
+        problem = radio_problem(RADIO)
+        if not problem and "--keys" in cmd:
+            index = cmd.index("--keys") + 1
+            problem = key_problem(Path(cmd[index])) if index < len(cmd) else "Host command has no key path."
+        if problem:
+            self.set_status(problem)
+            return False
+        return True
 
     def _close_requested(self, *_):
         if self._radio_is_busy():
@@ -270,6 +359,9 @@ class TradeBox(Gtk.Application):
             self.status.set_text(text)
 
     def show_home(self, *_):
+        if not self._backend_ready or self._startup_busy:
+            self.show_startup()
+            return
         box = self.page("POKÉMON TRADE BOX")
         box.append(self.button("LEGENDS Z-A", self.show_za))
         box.append(self.button("SWORD / SHIELD", self.show_swsh))
@@ -377,6 +469,12 @@ class TradeBox(Gtk.Application):
         if self._radio_is_busy():
             return
 
+        if not self._host_prerequisites([]):
+            return
+        if self.startup_report is not None and not self.startup_report.firmware_ready:
+            self.set_status("Firmware tools unavailable. Fix the PokeLDN venv, then rerun startup checks in Settings.")
+            return
+
         port = self._serial_radio_device()
 
         if port is None:
@@ -389,6 +487,8 @@ class TradeBox(Gtk.Application):
         )
 
     def _launch_esp32_helper(self, action, port):
+        if not self._host_prerequisites([]):
+            return False
         self.esp32_action = action
 
         labels = {
@@ -547,27 +647,7 @@ class TradeBox(Gtk.Application):
         return RADIO if RADIO.startswith("esp32:") else f"esp32:{RADIO}"
 
     def _serial_radio_device(self):
-        raw = RADIO[6:] if RADIO.startswith("esp32:") else RADIO
-
-        if raw and raw != "auto":
-            path = Path(raw).expanduser()
-            return path if path.exists() else None
-
-        by_id = Path("/dev/serial/by-id")
-        if by_id.exists():
-            candidates = sorted(by_id.glob("*"))
-            preferred = [
-                p for p in candidates
-                if any(token in p.name.casefold()
-                       for token in ("cp210", "silicon_labs", "usb_to_uart"))
-            ]
-            if preferred:
-                return preferred[0]
-            if candidates:
-                return candidates[0]
-
-        fallback = Path("/dev/ttyUSB0")
-        return fallback if fallback.exists() else None
+        return find_radio(RADIO)
 
     def reset_esp32(self):
         import serial
@@ -694,11 +774,16 @@ class TradeBox(Gtk.Application):
         self._request_radio_operation("stop", stopped)
 
     def launch(self, cmd, label, *, reset=True):
+        if self._radio_is_busy() or not self._host_prerequisites(cmd):
+            return
         self._request_radio_operation(
             "launch", lambda: self._launch_ready(cmd, label), reset=reset
         )
 
     def _launch_ready(self, cmd, label):
+        # The board or keys may disappear while the previous session stops.
+        if not self._host_prerequisites(cmd):
+            return False
         stamp = time.strftime("%Y%m%d-%H%M%S")
         logfile = LOG_DIR / f"{stamp}.log"
         self.proc_log = open(logfile, "w", encoding="utf-8")
@@ -3442,26 +3527,14 @@ class TradeBox(Gtk.Application):
     def _species_status(self):
         games = [
             ("frlg", "FireRed / LeafGreen"),
-            ("lgpe", "Let's Go Pikachu / Eevee"),
             ("swsh", "Sword / Shield"),
             ("bdsp", "Brilliant Diamond / Shining Pearl"),
-            ("pla", "Legends: Arceus"),
-            ("sv", "Scarlet / Violet"),
             ("za", "Legends Z-A"),
         ]
-
-        rows = []
-        pkhex_ok = False
-
-        for game, label in games:
-            try:
-                count = len(pokemon.SERVICE.species(game))
-                rows.append((label, f"{count} species"))
-                pkhex_ok = True
-            except Exception as exc:
-                rows.append((label, f"ERROR: {exc}"))
-
-        return pkhex_ok, rows
+        counts = self.startup_report.species if self.startup_report is not None else {}
+        rows = [(label, f"{counts[game]} species" if game in counts else "Not checked")
+                for game, label in games]
+        return bool(counts) and all(counts.get(game, 0) > 0 for game, _label in games), rows
 
     def show_settings(self, *_):
         box = self.page("SETTINGS / STATUS", self.show_home)
@@ -3477,7 +3550,7 @@ class TradeBox(Gtk.Application):
         col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         col.set_margin_end(5)
 
-        version = self._pokeldn_version()
+        version = self.startup_report.version if self.startup_report is not None else "Unknown"
         radio_device = self._serial_radio_device()
         radio_ok = radio_device is not None
         patch_ok = self._friendship_patch_active()
@@ -3487,6 +3560,7 @@ class TradeBox(Gtk.Application):
             label=(
                 f"PokemonTradeBox-Pi: v{APP_VERSION}\n"
                 f"pokeldn: {version}\n"
+                f"Program Surface: {self.startup_report.api if self.startup_report is not None else 'Unknown'}\n"
                 f"PKHeX service: {'OK' if pkhex_ok else 'ERROR'}\n"
                 f"Friendship / Happiness support: "
                 f"{'ACTIVE' if patch_ok else 'NOT DETECTED'}\n"
@@ -3542,8 +3616,18 @@ class TradeBox(Gtk.Application):
         trainers.set_selectable(True)
         col.append(trainers)
 
+        if self.startup_report is not None:
+            checks = Gtk.Label(label=f"Last startup check\n\n{self.startup_report.text()}", xalign=0)
+            checks.set_wrap(True)
+            checks.set_selectable(True)
+            col.append(checks)
+
         sc.set_child(col)
         box.append(sc)
+        retry = self.button("RUN STARTUP CHECKS", self.run_startup_checks)
+        retry.set_vexpand(False)
+        retry.set_size_request(-1, 42)
+        box.append(retry)
         self.win.set_child(box)
 
 

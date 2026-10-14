@@ -16,6 +16,7 @@ import unittest
 from pathlib import Path
 
 from session_control import SessionControl
+from startup_checks import Check, StartupReport, check_startup, key_problem
 from test_session_control import Clock, Process
 
 
@@ -94,7 +95,11 @@ class TradeBoxOperationTests(unittest.TestCase):
             "Path": Path, "os": os, "json": json, "time": time,
             "APP_DIR": self.root, "LOG_DIR": self.root, "REPO": self.root,
             "PYTHON": self.root / "python", "RADIO": "auto",
+            "CONFIG_PATH": self.root / "config.json", "APP_VERSION": "0.4.3",
+            "Check": Check, "StartupReport": StartupReport, "check_startup": check_startup,
+            "radio_problem": lambda _radio: "", "key_problem": key_problem,
         }
+        self.namespace = namespace
         source = Path(__file__).resolve().parents[1] / "tradebox.py"
         parsed = ast.parse(source.read_text(encoding="utf-8"))
         application = next(node for node in parsed.body
@@ -104,6 +109,7 @@ class TradeBoxOperationTests(unittest.TestCase):
                             type_ignores=[])
         exec(compile(ast.fix_missing_locations(module), str(source), "exec"), namespace)
         self.app = namespace["TradeBox"]()
+        self.app._backend_ready = True  # Existing operation tests begin after startup.
         self.app.session_control = SessionControl(clock=self.clock)
         self.app.reset_esp32 = lambda: self.resets.append("reset")
         self.app._serial_radio_device = lambda: self.root / "radio"
@@ -291,6 +297,105 @@ class TradeBoxOperationTests(unittest.TestCase):
         self.app.session_control.mark_active()
         self.assertTrue(self.app._close_requested())
         self.assertFalse(self.app.quit_called)
+
+    def test_missing_keys_blocks_host_before_stop_reset_or_spawn(self):
+        old = self.app.proc = Process()
+        self.app.launch(["host", "--keys", self.root / "missing.keys"], "Trade")
+        self.assertEqual(old.signals, [])
+        self.assertFalse(self.app.session_control.busy)
+        self.assertEqual(self.resets, [])
+        self.assertEqual(self.spawns, [])
+        self.assertIn("Keys missing", self.app.current_label)
+        # FR/LG hosts do not need console keys.
+        self.app.launch(["frlg-host"], "FR/LG", reset=False)
+        self.assertTrue(self.app.session_control.busy)
+
+    def test_unplugged_radio_blocks_host_and_can_be_connected_without_restart(self):
+        self.namespace["radio_problem"] = lambda _radio: "ESP32 not found"
+        self.app.launch(["host"], "Trade")
+        self.app._start_esp32_action("check")
+        self.assertEqual(self.spawns, [])
+        self.assertEqual(self.resets, [])
+        self.assertFalse(self.app.session_control.busy)
+        self.namespace["radio_problem"] = lambda _radio: ""
+        self.app.launch(["host"], "Trade", reset=False)
+        self.app._poll_radio_operation()
+        self.assertEqual(len(self.spawns), 1)
+
+    def test_unplugging_while_stopping_cancels_pending_host(self):
+        old = self.app.proc = Process()
+        self.app.launch(["host"], "Trade", reset=False)
+        self.namespace["radio_problem"] = lambda _radio: "ESP32 not found"
+        old.returncode = 0
+        self.app._poll_radio_operation()
+        self.assertEqual(self.spawns, [])
+        self.assertFalse(self.app.session_control.busy)
+        self.assertIn("ESP32 not found", self.app.current_label)
+
+    def test_unplugging_while_stopping_cancels_pending_firmware_helper(self):
+        old = self.app.proc = Process()
+        self.app._start_esp32_action("check")
+        self.namespace["radio_problem"] = lambda _radio: "ESP32 not found"
+        old.returncode = 0
+        self.complete_reset()
+        self.assertEqual(self.spawns, [])
+        self.assertFalse(self.app.session_control.busy)
+        self.assertIn("ESP32 not found", self.app.current_label)
+
+    def test_retry_reloads_fixed_config_and_opens_home_after_gtk_completion(self):
+        shown = []
+        self.app.show_startup = lambda: shown.append("checks")
+        self.app.show_home = lambda: shown.append("home")
+        self.app._load_backend = lambda _config: (None,) * 5
+        self.namespace["check_startup"] = lambda path, _app: StartupReport(
+            config=json.loads(path.read_text()), checks=[Check("Test", "ok", "Ready")])
+        path = self.namespace["CONFIG_PATH"]
+        path.write_text("{broken", encoding="utf-8")
+        self.app.run_startup_checks()
+        self.assertTrue(self.app._startup_busy)
+        self.assertFalse(self.app._backend_ready)
+        self.assertNotIn("home", shown)
+        self.scheduler.drain()
+        self.assertFalse(self.app._startup_busy)
+        self.assertFalse(self.app._backend_ready)
+        fixed = {"pokeldn_repo": str(self.root / "custom-backend"),
+                 "prod_keys": str(self.root / "custom.keys"), "radio": "auto",
+                 "frlg_version": "leafgreen", "trainers": {"frlg": {"ot": "RICK"}}}
+        path.write_text(json.dumps(fixed), encoding="utf-8")
+        self.app.run_startup_checks()
+        self.scheduler.drain()
+        self.assertTrue(self.app._backend_ready)
+        self.assertEqual(shown[-1], "home")
+        self.assertEqual(self.namespace["REPO"], self.root / "custom-backend")
+        self.assertEqual(self.namespace["FRLG_VERSION"], "leafgreen")
+        self.assertEqual(self.namespace["TRAINERS"]["frlg"]["ot"], "RICK")
+
+    def test_startup_warning_allows_home_but_missing_serial_blocks_radio_work(self):
+        shown = []
+        self.app.show_startup = lambda: shown.append("checks")
+        self.app.show_home = lambda: shown.append("home")
+        report = StartupReport(config={"pokeldn_repo": str(self.root),
+            "prod_keys": str(self.root / "keys"), "radio": "auto",
+            "frlg_version": "firered", "trainers": {}},
+            checks=[Check("Serial", "warning", "Missing")])
+        self.app._startup_complete(report, (None,) * 5)
+        self.assertTrue(self.app._backend_ready)
+        self.assertEqual(shown, ["checks"])
+        self.app.launch(["host"], "Trade")
+        self.assertEqual(self.spawns, [])
+        self.assertIn("pyserial", self.app.current_label)
+
+    def test_checks_cannot_reload_config_during_live_session_or_firmware(self):
+        self.app.show_startup = lambda: self.fail("Should not leave a live session")
+        self.app.proc = Process()
+        self.app.run_startup_checks()
+        self.assertFalse(self.app._startup_busy)
+        self.assertEqual(self.app.proc.signals, [])
+        self.app.proc = None
+        self.app.session_control.begin("firmware", None)
+        self.app.session_control.mark_active()
+        self.app.run_startup_checks()
+        self.assertFalse(self.app._startup_busy)
 
 
 if __name__ == "__main__":

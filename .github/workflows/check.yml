@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 jobs:
-  session-control:
+  tradebox:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -16,8 +16,8 @@ jobs:
         with:
           python-version: '3.12'
       - name: Check Python syntax
-        run: python -m py_compile tradebox.py esp32_manager.py session_control.py
+        run: python -m py_compile tradebox.py esp32_manager.py session_control.py startup_checks.py
       - name: Check launcher scripts
         run: bash -n install.sh start-tradebox.sh
-      - name: Test shutdown and radio operation coordination
+      - name: Test startup, shutdown, and radio operation coordination
         run: python -m unittest discover -s tests -v

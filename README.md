@@ -123,7 +123,7 @@ python3 -m py_compile tradebox.py esp32_manager.py session_control.py
 bash -n install.sh start-tradebox.sh
 ```
 
-GitHub Actions runs these checks on Ubuntu with Python 3.12. They cover PID-only signalling, grace-period timing, competing radio operations, reset and startup failures, and cancelled requests after failed shutdowns. The v0.4.2 touchscreen/radio behavior still requires a Pi hardware check; see [the test checklist](docs/setup.md#v042-hardware-check).
+GitHub Actions runs these checks on Ubuntu with Python 3.12. They cover PID-only signalling, grace-period timing, competing radio operations, reset and startup failures, and cancelled requests after failed shutdowns. Rick confirmed v0.4.2 STOP and ESP32 reset working on the Pi. Additional device checks are documented in [the test checklist](docs/setup.md#v042-hardware-check).
 
 ## Friendship / Happiness
 

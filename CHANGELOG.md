@@ -13,7 +13,7 @@
 - blocked window closing during radio operations and gracefully stopped running sessions before closing
 - added hardware-independent shutdown and callback regression tests and an Ubuntu CI workflow
 - updated install syntax checks for the new session controller
-- Pi touchscreen and ESP32 hardware validation is pending
+- Rick confirmed STOP works and the ESP32 resets quickly on the Pi
 
 ## v0.4.1
 

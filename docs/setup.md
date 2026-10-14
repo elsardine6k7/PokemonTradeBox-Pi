@@ -106,7 +106,7 @@ If the original installation was copied onto the Pi instead of cloned with Git, 
 
 ## v0.4.2 hardware check
 
-Run these checks on the Pi before treating v0.4.2 as hardware-validated:
+STOP and ESP32 reset were confirmed working on the Pi. Use this checklist to further verify shutdown and board-operation coordination:
 
 1. Start a normal trade host, tap STOP, and confirm **Stopping...** appears immediately. Navigate between pages while it stops; the touchscreen should continue responding.
 2. Wait for **Stopped. ESP32 ready.**, then start another trade. The new session should connect normally.

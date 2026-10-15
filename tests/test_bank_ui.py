@@ -164,6 +164,55 @@ class BankCallbacksTests(unittest.TestCase):
         self.assertFalse(self.app.poll_process(proc))
         self.assertEqual(self.rpc, [])
 
+    def test_regular_trade_registers_receiving_before_launch_and_preserves_bank_queue(self):
+        self.configure()
+        self.app.launch(["host", "--received", "old.pk8"], "Regular trade",
+                        bank_game="swsh", offers=[{"file": "built.pk8"}])
+        self.complete_reset()
+        self.assertTrue(self.app.session_control.busy)
+        self.assertEqual(self.spawns, [])
+        action, payload, callback = self.rpc.pop(0)
+        self.assertEqual(action, "watch")
+        self.assertEqual(payload["game"], "swsh")
+        callback({"cmd": ["host", "--received", "new.pk8"]}, "")
+        run = self.app._bank_run
+        self.assertTrue(run["regular"])
+        self.assertFalse(self.app.session_control.busy)
+        self.assertEqual(self.spawns[0][0][-1], "new.pk8")
+        self.app._bank_poll_progress(run["token"])
+        received = {"id": "retail-mon", "summary": "Received Pikachu"}
+        self.rpc[-1][2]({"token": run["token"], "completed": 1, "total": 1,
+                        "received_count": 1, "received_entries": [received]}, "")
+        self.assertEqual([entry["id"] for entry in self.app.bank_queue], ["first", "second"])
+        self.assertEqual(self.app.bank_entries, [received])
+        self.assertEqual(run["proc"].signals, [])
+        self.assertIn("1 received Pokemon added", self.app.current_label)
+        run["proc"].returncode = 0
+        self.assertTrue(self.app.poll_process(run["proc"]))
+        self.assertEqual(self.rpc[-1][0], "end")
+        self.rpc[-1][2]({"token": run["token"], "completed": 1, "total": 1,
+                        "received_count": 1, "received_entries": [received]}, "")
+        self.assertEqual(self.app.bank_entries, [received])
+        self.assertIsNone(self.app._bank_run)
+
+    def test_regular_receiving_preparation_failure_releases_radio_without_launching(self):
+        self.configure()
+        self.app.launch(["host"], "Trade", bank_game="za", offers=[])
+        self.complete_reset()
+        self.rpc[-1][2](None, "Unfinished run needs reconciliation")
+        self.assertFalse(self.app.session_control.busy)
+        self.assertEqual(self.spawns, [])
+        self.assertIn("reconciliation", self.app.current_label)
+
+    def test_regular_trade_on_api_13_keeps_existing_host_behavior(self):
+        self.configure()
+        self.app._bank_available = False
+        self.app.launch(["host"], "Trade", bank_game="swsh", offers=[])
+        self.complete_reset()
+        self.assertEqual(len(self.spawns), 1)
+        self.assertEqual(self.rpc, [])
+        self.assertIsNone(self.app._bank_run)
+
     def test_reset_failure_returns_prepared_queue_to_retry_or_cancel(self):
         self.configure()
         run = self.prepared()

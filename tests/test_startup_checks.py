@@ -40,7 +40,7 @@ def fake_backend(repo, *, version="0.23.0", api=(1, 3), service=None):
             lines.append(service or (
                 "class Service:\n"
                 "    def species(self, game): return [game]\n"
-                "    names = options = make = paste = species\n"
+                "    names = options = make = paste = check = species\n"
                 "SERVICE = Service()"))
         path.write_text("\n".join(lines), encoding="utf-8")
     (repo / "pokeldn" / "__init__.py").write_text(f"__version__ = {version!r}", encoding="utf-8")
@@ -208,7 +208,7 @@ class StartupChecksTests(unittest.TestCase):
         (app / "bank.py").write_text(
             "class TradeSession:\n    def advance(self, count): pass\n"
             + "\n".join(f"def {name}(*a, **kw): pass" for name in
-                ("entries", "find", "import_file", "destinations", "offer", "remove")), encoding="utf-8")
+                ("entries", "find", "import_file", "deposit", "destinations", "offer", "remove")), encoding="utf-8")
         (app / "received.py").write_text("def trades_done(line): pass\n", encoding="utf-8")
         supported = run_probe(Path(sys.executable), repo, pkhex=True)
         self.assertTrue(supported["ok"])

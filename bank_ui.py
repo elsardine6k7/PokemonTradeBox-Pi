@@ -123,7 +123,7 @@ class BankUI:
         pages = max(1, (len(found) + 11) // 12)
         self.bank_page = min(self.bank_page, pages - 1)
         if not found:
-            col.append(self._bank_text("No Pokemon to show. Import a Pokemon file or a game save to get started."))
+            col.append(self._bank_text("No Pokemon to show. Complete a link trade to bank what you receive, or import a Pokemon file / save."))
         for entry in found[self.bank_page * 12:(self.bank_page + 1) * 12]:
             row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
             label = self._bank_text(f"{entry['summary']}\n{GAMES.get(entry['game'], entry['game'])} - {'Legal' if entry['legal'] else 'Legality warning'}")
@@ -374,7 +374,7 @@ class BankUI:
     def _bank_spawn(self, run):
         try:
             logfile = self._bank_dir / "logs" / f"bank-{run['token']}.log"
-            self._launch_ready(run["cmd"], f"Bank trade: {self._bank_target_name()}", logfile=logfile)
+            self._launch_ready(run["cmd"], run.get("label", f"Bank trade: {self._bank_target_name()}"), logfile=logfile)
             if self.proc is None:
                 run["start_error"] = self.current_label
                 run["state"] = "prepared"
@@ -396,6 +396,29 @@ class BankUI:
                 self.bank_cancel_prepared()
                 self.set_status(f"Could not start Bank host: {exc}")
         return False
+
+    def _bank_launch_regular(self, cmd, label, game, offers):
+        """Called with the radio reserved, after the previous host has finished."""
+        if not self._bank_available:
+            return self._launch_ready(cmd, label)
+        token = uuid4().hex
+
+        def ready(result, error):
+            if error:
+                self.set_status(f"Could not prepare automatic banking: {error}. Open Bank to reconcile any unfinished run.")
+            else:
+                self._bank_run = {"token": token, "queue": [], "offers": offers,
+                    "cmd": result["cmd"], "proc": None, "state": "starting", "completed": 0,
+                    "progress_pending": False, "error": "", "regular": True, "label": label}
+                self._bank_spawn(self._bank_run)
+            self._finish_radio_operation()
+            return False
+
+        self.set_status("Preparing automatic banking for received Pokemon...")
+        self._bank_rpc("watch", {"token": token, "game": game,
+                       "offers": [{"file": str(item["file"])} for item in offers],
+                       "cmd": [str(arg) for arg in cmd]}, ready)
+        return True
 
     def _bank_attached(self, token, error):
         run = self._bank_run
@@ -423,7 +446,7 @@ class BankUI:
                     self._bank_run_error(token, error)
                 else:
                     self._bank_apply_progress(result)
-                    if result["completed"] >= len(current["queue"]) and current["proc"].poll() is None and not self.session_control.busy:
+                    if not current.get("regular") and result["completed"] >= len(current["queue"]) and current["proc"].poll() is None and not self.session_control.busy:
                         self.stop_current_session()
                 return False
             self._bank_rpc("progress", {"token": token}, done)
@@ -434,14 +457,21 @@ class BankUI:
         if run is None or run["token"] != result["token"]:
             return
         previous = run["completed"]
+        previous_received = run.get("received_count", 0)
         run["completed"] = max(previous, result["completed"])
         count = min(run["completed"], len(run["queue"]))
-        self.bank_queue = run["queue"][count:]
+        if not run.get("regular"):
+            self.bank_queue = run["queue"][count:]
         completed_ids = {entry["id"] for entry in run["queue"][:count]}
+        received = result.get("received_entries", [])
+        completed_ids.update(entry["id"] for entry in received)
         self.bank_entries = [entry for entry in self.bank_entries if entry["id"] not in completed_ids]
-        if not self.session_control.busy:
-            self.set_status(f"Bank: {count}/{len(run['queue'])} confirmed trades.")
-        if run["completed"] != previous:
+        self.bank_entries = received + self.bank_entries
+        run["received_count"] = result.get("received_count", 0)
+        run["received_already"] = result.get("received_already", 0)
+        if not self.session_control.busy and (run["completed"] != previous or run["received_count"] != previous_received):
+            self.set_status(f"{run['completed']} confirmed trade(s); {run['received_count']} received Pokemon added to Bank.")
+        if run["completed"] != previous or run["received_count"] != previous_received:
             self._bank_refresh_controls()
 
     def _bank_refresh_controls(self):
@@ -480,7 +510,7 @@ class BankUI:
                 self._bank_run = None
                 self.bank_pending = []
                 self._bank_refresh_controls()
-                self.set_status("Bank run finished; uncompleted Pokemon remain in the Bank.")
+                self.set_status(f"Trade finished. Received: {run.get('received_count', 0)} added to Bank, {run.get('received_already', 0)} already banked.")
             return False
         self._bank_rpc("end", {"token": token, "confirm_stopped": True}, done)
         return False
@@ -518,7 +548,8 @@ class BankUI:
                 self._bank_run = None
                 note = f" Host did not start: {run['start_error']}" if run.get("start_error") else ""
                 self.set_status("Bank trade cancelled; Bank records kept." + note)
-                self.show_bank_queue()
+                if not run.get("regular"):
+                    self.show_bank_queue()
             return False
         self._bank_rpc("end", {"token": token, "confirm_stopped": True}, done)
 

@@ -103,12 +103,14 @@ class BankEngine:
         return self.run_dir / f"{token}.json"
 
     def _save(self):
+        self.active["dirty"] = True
         record = self.active["receipt"]
         path = self._receipt_path(record["token"])
         self.run_dir.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(record), encoding="utf-8")
         os.replace(tmp, path)
+        self.active["dirty"] = False
 
     def pending(self):
         pending = []
@@ -137,7 +139,47 @@ class BankEngine:
                        "session": self.bank.TradeSession(receipt["offers"], folder=self.folder),
                        "log": log.open("rb"), "buffer": b"", "dropping": False, "seen": 0}
 
-    def progress(self, token):
+    def _incoming_path(self, receipt, number):
+        base = Path(receipt["received"])
+        game = receipt["game"]
+        if game == "bdsp":
+            return base.with_name(f"{base.stem}_{number}.pb8")
+        if game == "frlg" and receipt.get("receive_trades", 1) > 1:
+            matches = list(base.parent.glob(f"{base.stem}_trade{number}_*.pk3"))
+            if len(matches) > 1:
+                raise ValueError(f"Multiple received files for trade {number}; check this run's files.")
+            return matches[0] if matches else None
+        return base if number == 1 else base.with_name(f"{base.stem}-{number}{base.suffix}")
+
+    def _deposit_received(self, run, *, final=False):
+        record = run["receipt"]
+        if not record.get("received"):  # Receipts made before automatic banking.
+            return
+        incoming = record.setdefault("incoming", {})
+        for number in range(1, run["session"].completed + 1):
+            if str(number) in incoming:
+                continue
+            path = self._incoming_path(record, number)
+            if path is None or not path.is_file():
+                # FR/LG writes its files during shutdown, after the done lines.
+                if final:
+                    raise ValueError(f"Received file for confirmed trade {number} is missing. Check received-bank, then retry Bank finish.")
+                continue
+            info = self.pokemon.SERVICE.check(record["game"], str(path))
+            entry = self.bank.deposit(record["game"], str(path), info, folder=self.folder)
+            incoming[str(number)] = {"state": "banked" if entry else "already",
+                                     "entry": asdict(entry) if entry else None}
+            self._save()
+
+    def _result(self, receipt):
+        incoming = list(receipt.get("incoming", {}).values())
+        return {"token": receipt["token"], "completed": receipt["completed"],
+                "total": len(receipt["offers"]),
+                "received_count": sum(item["state"] == "banked" for item in incoming),
+                "received_already": sum(item["state"] == "already" for item in incoming),
+                "received_entries": [item["entry"] for item in incoming if item["entry"]]}
+
+    def progress(self, token, *, final=False):
         run = self._require_run(token)
         # Retry a previously observed count even if an OSError consumed its line.
         run["session"].advance(run["seen"])
@@ -167,7 +209,11 @@ class BankEngine:
             except Exception:
                 run["receipt"]["completed"] = previous
                 raise
-        return {"token": token, "completed": completed, "total": len(run["receipt"]["offers"])}
+        self._deposit_received(run, final=final)
+        # Also retry receipt writes after a deposit succeeded but its save failed.
+        if run.get("dirty"):
+            self._save()
+        return self._result(run["receipt"])
 
     def dispatch(self, action, payload):
         if action == "list":
@@ -190,29 +236,42 @@ class BankEngine:
             entry = self._entry(payload["id"])
             self.bank.remove(entry.id, folder=self.folder)
             return {}
-        if action == "begin":
+        if action in ("begin", "watch"):
             self._idle()
-            token, game, ids = payload["token"], payload["game"], payload["ids"]
+            token, game = payload["token"], payload["game"]
             self._receipt_path(token)
-            if game not in GAMES or not 1 <= len(ids) <= 6 or len(ids) != len(set(ids)):
-                raise ValueError("Queue one to six different Bank records for a supported game.")
-            config = payload["config"]
-            trainer = config["trainers"][game]
-            offers = [self.bank.offer(self._entry(entry_id), game, trainer) for entry_id in ids]
-            if any(not item.get("legal") for item in offers):
-                raise ValueError("PKHeX refused a legal conversion for one of the queued Pokemon.")
-            filler = None
-            if game == "frlg" and len(offers) == 1:
-                filler = self.pokemon.SERVICE.make("frlg", 25, trainer, level=5, shiny=False)["file"]
+            if game not in GAMES:
+                raise ValueError("Unsupported Bank game.")
             received = self.app_dir / "received-bank" / f"{token}.{EXTENSIONS[game]}"
             received.parent.mkdir(parents=True, exist_ok=True)
-            cmd = trade_command(self.repo, self.python, config, game, offers, received,
-                                version=payload.get("version", "firered"), filler=filler)
+            if action == "begin":
+                ids = payload["ids"]
+                if not 1 <= len(ids) <= 6 or len(ids) != len(set(ids)):
+                    raise ValueError("Queue one to six different Bank records for a supported game.")
+                config = payload["config"]
+                trainer = config["trainers"][game]
+                offers = [self.bank.offer(self._entry(entry_id), game, trainer) for entry_id in ids]
+                if any(not item.get("legal") for item in offers):
+                    raise ValueError("PKHeX refused a legal conversion for one of the queued Pokemon.")
+                filler = None
+                if game == "frlg" and len(offers) == 1:
+                    filler = self.pokemon.SERVICE.make("frlg", 25, trainer, level=5, shiny=False)["file"]
+                cmd = trade_command(self.repo, self.python, config, game, offers, received,
+                                    version=payload.get("version", "firered"), filler=filler)
+                receive_trades = len(offers)
+            else:
+                # Regular builder trades have no outgoing Bank IDs to remove.
+                offers = [{"file": str(item["file"])} for item in payload["offers"]]
+                cmd = [str(arg) for arg in payload["cmd"]]
+                flag = {"za": "--offer-out", "swsh": "--received", "bdsp": "--save-theirs", "frlg": "-o"}[game]
+                cmd[cmd.index(flag) + 1] = str(received.with_suffix("") if game == "bdsp" else received)
+                receive_trades = int(cmd[cmd.index("--trades") + 1]) if "--trades" in cmd else 1
             log = self.app_dir / "logs" / f"bank-{token}.log"
             log.parent.mkdir(parents=True, exist_ok=True)
             log.touch(exist_ok=False)
             receipt = {"token": token, "game": game, "offers": offers, "state": "running",
-                       "completed": 0, "pid": None, "birth": None}
+                       "completed": 0, "pid": None, "birth": None, "received": str(received),
+                       "receive_trades": receive_trades, "incoming": {}}
             try:
                 self._open_run(receipt)
                 self._save()
@@ -238,7 +297,7 @@ class BankEngine:
             run = self._require_run(payload["token"])
             if host_alive(run["receipt"]):
                 raise ValueError("The Bank host is still running. Stop it before finishing the Bank run.")
-            result = self.progress(payload["token"])
+            result = self.progress(payload["token"], final=True)
             run["receipt"]["state"] = "finished"
             self._save()
             run["log"].close()
@@ -249,7 +308,7 @@ class BankEngine:
                 raise ValueError("Stop and finish the current Bank run first.")
             record = json.loads(self._receipt_path(payload["token"]).read_text(encoding="utf-8"))
             if record["state"] == "finished":
-                return {"token": record["token"], "completed": record["completed"], "total": len(record["offers"])}
+                return self._result(record)
             if host_alive(record):
                 raise ValueError("The old Bank host is still running. Stop it before reconciling.")
             if record.get("pid") is None and not payload.get("confirm_stopped"):

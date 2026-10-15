@@ -803,11 +803,12 @@ class TradeBox(BankUI, Gtk.Application):
 
         self._request_radio_operation("stop", stopped)
 
-    def launch(self, cmd, label, *, reset=True):
+    def launch(self, cmd, label, *, reset=True, bank_game=None, offers=()):
         if self._radio_is_busy() or not self._host_prerequisites(cmd):
             return
         self._request_radio_operation(
-            "launch", lambda: self._launch_ready(cmd, label), reset=reset
+            "launch", lambda: (self._bank_launch_regular(cmd, label, bank_game, offers)
+                               if bank_game else self._launch_ready(cmd, label)), reset=reset
         )
 
     def _launch_ready(self, cmd, label, *, logfile=None):
@@ -1358,7 +1359,7 @@ class TradeBox(BankUI, Gtk.Application):
         for info in infos[:6]:
             cmd += ["--trade-offer", info["file"]]
 
-        self.launch(cmd, f"Z-A hosting {min(len(infos), 6)} offer(s)")
+        self.launch(cmd, f"Z-A hosting {min(len(infos), 6)} offer(s)", bank_game="za", offers=infos[:6])
 
     # ---------- Brilliant Diamond / Shining Pearl ----------
 
@@ -1419,12 +1420,13 @@ class TradeBox(BankUI, Gtk.Application):
         self.launch(
             cmd,
             f"BDSP Union Room • {min(len(infos), 6)} offer(s)",
+            bank_game="bdsp", offers=infos[:6],
         )
 
     def show_bdsp_received(self, *_):
         box = self.page("BDSP • RECEIVED", self.show_bdsp)
         paths = sorted(
-            APP_DIR.glob("received-bdsp*.pb8"),
+            [*APP_DIR.glob("received-bdsp*.pb8"), *(APP_DIR / "received-bank").glob("*.pb8")],
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )
@@ -1481,11 +1483,11 @@ class TradeBox(BankUI, Gtk.Application):
         for info in infos:
             cmd += ["--offer-file", info["file"]]
 
-        self.launch(cmd, f"Sword/Shield hosting {len(infos)} offer(s)")
+        self.launch(cmd, f"Sword/Shield hosting {len(infos)} offer(s)", bank_game="swsh", offers=infos)
 
     def show_swsh_received(self, *_):
         box = self.page("SWORD / SHIELD • RECEIVED", self.show_swsh)
-        paths = sorted(REPO.glob("received-sword*.pk8"), key=lambda p: p.stat().st_mtime, reverse=True)
+        paths = sorted([*REPO.glob("received-sword*.pk8"), *(APP_DIR / "received-bank").glob("*.pk8")], key=lambda p: p.stat().st_mtime, reverse=True)
         if not paths:
             box.append(Gtk.Label(label="No received Sword/Shield Pokémon saved yet."))
         else:
@@ -2578,7 +2580,8 @@ class TradeBox(BankUI, Gtk.Application):
 
         self.launch(
             cmd,
-            f"{self._frlg_name()} Direct Corner • {len(party)} party Pokémon"
+            f"{self._frlg_name()} Direct Corner • {len(party)} party Pokémon",
+            bank_game="frlg", offers=[party[int(offer_slot)]],
         )
 
     def show_frlg_gifts(self, *_):

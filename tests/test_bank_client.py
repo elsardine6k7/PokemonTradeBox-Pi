@@ -31,7 +31,7 @@ class BankClientTests(unittest.TestCase):
             "from test_bank import FakeBank\nfrom pathlib import Path\n"
             "api = FakeBank(Path(__file__).resolve().parents[2])\n"
             "entries = api.entries\nfind = api.find\nimport_file = api.import_file\n"
-            "destinations = api.destinations\noffer = api.offer\nremove = api.remove\nTradeSession = api.TradeSession\n",
+            "destinations = api.destinations\noffer = api.offer\nremove = api.remove\nTradeSession = api.TradeSession\ndeposit = api.deposit\n",
             encoding="utf-8")
         (app / "received.py").write_text("from test_bank import trades_done\n", encoding="utf-8")
         self.clients = []
@@ -78,6 +78,25 @@ class BankClientTests(unittest.TestCase):
         self.assertIsNone(result)
         self.assertIn("Another TradeBox", error)
         self.assertEqual(self.request(first, "list")[1], "")
+
+    def test_real_worker_banks_only_confirmed_received_file(self):
+        with (self.repo / "pokeldn/pokemon.py").open("a", encoding="utf-8") as file:
+            file.write("\nSERVICE.check = lambda game, path: {'legal': True}\n")
+        client = self.client()
+        token = "a" * 32
+        result, error = self.request(client, "watch", {"token": token, "game": "swsh",
+            "offers": [{"file": "built.pk8"}], "cmd": ["host", "--received", "old.pk8"]})
+        self.assertEqual(error, "")
+        Path(result["received"]).write_bytes(b"retail Pokemon bytes")
+        result, error = self.request(client, "progress", {"token": token})
+        self.assertEqual(result["received_count"], 0)
+        (self.root / "logs" / f"bank-{token}.log").write_text("[done] trade 1 complete\n")
+        result, error = self.request(client, "end", {"token": token})
+        self.assertEqual(error, "")
+        self.assertEqual(result["received_count"], 1)
+        result, error = self.request(client, "list")
+        self.assertEqual(len(result["entries"]), 1)
+        self.assertEqual(Path(result["entries"][0]["path"]).read_bytes(), b"retail Pokemon bytes")
 
     def test_timeout_stops_only_the_bank_worker_group(self):
         with (self.repo / "pokeldn/app/bank.py").open("a", encoding="utf-8") as file:

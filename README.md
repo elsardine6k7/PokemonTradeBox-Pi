@@ -23,7 +23,7 @@ Portable 800×480 Raspberry Pi trade-box UI with touch-friendly Pokémon buildin
 - responsive STOP and exclusive radio operations during shutdown, reset, and firmware work
 - pokeldn / PKHeX status page
 - startup diagnostics with Retry, offline editing when the ESP32 is disconnected, and configured-path install checks
-- Bank imports, browsing, conversion previews, and a six-slot trade queue through stable API 1.4
+- Bank imports, automatic banking of confirmed received Pokemon, browsing, conversion previews, and a six-slot trade queue through stable API 1.4
 - Labwc autostart helper
 
 The original setup was tested on a Raspberry Pi 4, an 800×480 DSI touchscreen, and a CP2102 ESP32 radio. The custom FR/LG Wonder Card builder has been tested end-to-end in-game, and the v0.4.0 ESP32 firmware manager was tested end-to-end on a classic ESP32/CP2102, including downloading, verifying, flashing, and re-checking official pokeldn radio firmware.
@@ -54,6 +54,8 @@ TradeBox v0.5.0 uses pokeldn's documented **Program Surface 1.3** (API major 1) 
 ## Pokemon Bank (v0.5.0)
 
 Open **POKEMON BANK** on Home to import a Pokémon file or save, browse stored records, choose a trade destination, and queue up to six different Pokémon. Converted offers are shown before starting the host. Only confirmed completed trades remove Bank records; cancelling or stopping preserves the uncompleted records. The host stops after the queue completes.
+
+Pokemon received from the retail game in regular link trades and Bank trades are automatically added after confirmed completion. FR/LG saves them when the host finishes. **IMPORT FILE / SAVE** remains available.
 
 TradeBox keeps its Bank separately from the desktop app and performs Bank work in PokeLDN's venv. Current trade destinations are Z-A, Sword/Shield, BDSP, FireRed, and LeafGreen. See [Bank usage and Pi test checklist](docs/bank.md) for imports, trainer selection, recovery, and saved received files.
 

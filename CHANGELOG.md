@@ -2,6 +2,8 @@
 
 ## v0.5.0
 
+- automatically banked confirmed received Pokemon from regular and Bank trades, preserving received bytes and legality warnings
+- tracked received files by unique run and trade number, with retry/recovery journaling and duplicate handling
 - added a touchscreen Bank using PokeLDN's documented API 1.4
 - imported Pokemon files and saves without changing their sources, with duplicate/refusal counts and conversion notes
 - added paginated browsing/search, destination checks, and explicit Bank-copy deletion

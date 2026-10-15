@@ -203,8 +203,9 @@ def probe_backend(repo: Path, *, pkhex: bool) -> dict:
         result.update(ok=True, version=version)
         if pkhex and api.level >= 4:
             try:
-                _surface("pokeldn.app.bank", ("entries", "find", "import_file", "destinations", "offer", "remove", "TradeSession", "TradeSession.advance"))
+                _surface("pokeldn.app.bank", ("entries", "find", "import_file", "deposit", "destinations", "offer", "remove", "TradeSession", "TradeSession.advance"))
                 _surface("pokeldn.app.received", ("trades_done",))
+                _surface("pokeldn.pokemon", ("SERVICE.check",))
                 result["bank_ready"] = True
             except Exception as exc:
                 result["bank_warning"] = f"Bank API unavailable: {exc}. Check your PokeLDN v0.24.0+ installation."

@@ -8,6 +8,9 @@ from bank_backend import GAMES
 from bank_client import BankClient
 
 
+BANK_GAME_NAMES = {**GAMES, "lgpe": "Let's Go", "pla": "Legends Arceus", "sv": "Scarlet / Violet"}
+
+
 def tracker_note(value):
     return {"empty": "HOME tracker warning: this conversion has no HOME-issued tracker.",
             "made": "HOME tracker warning: this conversion uses a generated tracker."}.get(value, "")
@@ -27,6 +30,11 @@ class BankUI:
         self.bank_game, self.bank_version = "za", "firered"
         self.bank_page = 0
         self._bank_search = ""
+        self._bank_scroll = None
+        self._bank_scroll_key = None
+        self._bank_scroll_value = 0
+        self._bank_scroll_ready = False
+        self._bank_browser_generation = 0
 
     def _configure_bank(self, config, available):
         self._bank_shutdown()
@@ -56,6 +64,7 @@ class BankUI:
     def _bank_action(self, action, payload, callback, *, timeout=60):
         if not self._bank_available or not self._bank_editable():
             return False
+        origin = getattr(self, "_current_page_title", "")
         self._bank_busy = True
         self._bank_cancel_allowed = action not in ("recover", "remove")
         self.set_status("Working on the Bank...")
@@ -65,7 +74,15 @@ class BankUI:
             self._bank_cancel_allowed = False
             if error:
                 self.set_status(f"Bank: {error}")
-                self.show_bank()
+                title = getattr(self, "_current_page_title", "")
+                if title == "BANK BROWSER":
+                    self.show_bank_browser()
+                elif title.startswith("BANK QUEUE"):
+                    self.show_bank_queue()
+                elif title == origin and action == "remove":
+                    self.show_bank_browser()
+                elif title == "POKEMON BANK" or title == origin:
+                    self.show_bank()
             else:
                 callback(result)
             return False
@@ -89,6 +106,7 @@ class BankUI:
         return label
 
     def show_bank(self, *_):
+        self._bank_remember_scroll()
         Gtk = self._bank_gtk
         box = self.page("POKEMON BANK", self.show_home)
         if not self._bank_available:
@@ -96,49 +114,120 @@ class BankUI:
             self.win.set_child(box)
             return
         available = self._bank_editable_silent()
+        sc = self.touch_scrolled_window()
+        sc.set_vexpand(True)
+        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        browse = self._bank_button(f"BROWSE POKEMON ({len(self.bank_entries)})", self.show_bank_browser)
+        browse.set_size_request(-1, 64)
+        browse.add_css_class("suggested-action")
+        col.append(browse)
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
         toolbar.append(self._bank_button("IMPORT FILE / SAVE", self.bank_choose_import, enabled=available))
         toolbar.append(self._bank_button("REFRESH", self.bank_refresh, enabled=available))
-        toolbar.append(self._bank_button(f"QUEUE ({len(self.bank_queue)}/6)", self.show_bank_queue))
-        box.append(toolbar)
-        box.append(self._bank_button(f"TRADE INTO: {self._bank_target_name()}", self.bank_choose_game, enabled=available))
+        col.append(toolbar)
+        col.append(self._bank_button(f"TRADE INTO: {self._bank_target_name()}", self.bank_choose_game, enabled=available))
+        col.append(self._bank_button(f"QUEUE ({len(self.bank_queue)}/6)", self.show_bank_queue))
         if self._bank_busy and self._bank_cancel_allowed:
-            box.append(self._bank_button("CANCEL BANK WORK", self.bank_cancel_work))
+            col.append(self._bank_button("CANCEL BANK WORK", self.bank_cancel_work))
         if self._bank_run is not None and self._bank_run.get("error"):
-            box.append(self._bank_button("RETRY BANK FINISH", self.bank_retry_finish))
-        search = Gtk.Entry(placeholder_text="Search saved Pokemon")
-        search.set_text(self._bank_search)
-        search.connect("changed", lambda entry: self._bank_search_changed(entry))
-        search.connect("activate", lambda *_: self.show_bank())
-        box.append(search)
-        box.append(self._bank_button("SEARCH", lambda *_: self.show_bank()))
-        sc = self.touch_scrolled_window()
-        sc.set_vexpand(True)
-        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+            col.append(self._bank_button("RETRY BANK FINISH", self.bank_retry_finish))
         for pending in self.bank_pending:
             col.append(self._bank_text(f"Unfinished Bank run ({GAMES.get(pending['game'], pending['game'])}). Reconcile its confirmed trades before hosting again."))
             col.append(self._bank_button("RECONCILE FINISHED RUN", lambda *_, p=pending: self.bank_confirm_recover(p), enabled=available))
+        sc.set_child(col)
+        box.append(sc)
+        self.win.set_child(box)
+
+    def _bank_remember_scroll(self):
+        if (getattr(self, "_current_page_title", "") == "BANK BROWSER" and self._bank_scroll is not None and self._bank_scroll_ready
+                and self._bank_scroll_key == (self._bank_search, self.bank_page)):
+            self._bank_scroll_value = self._bank_scroll.get_vadjustment().get_value()
+
+    def show_bank_browser(self, *_):
+        self._bank_remember_scroll()
+        if not self._bank_available:
+            self.show_bank()
+            return
+        from gi.repository import Pango
+        Gtk = self._bank_gtk
+        self._bank_browser_generation += 1
+        box = self.page("BANK BROWSER", self.show_bank)
+        available = self._bank_editable_silent()
+        toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+        search = Gtk.Entry(placeholder_text="Search saved Pokemon")
+        search.set_hexpand(True)
+        search.set_text(self._bank_search)
+        search.connect("changed", self._bank_search_changed)
+        search.connect("activate", self.show_bank_browser)
+        toolbar.append(search)
+        toolbar.append(self._bank_button("SEARCH", self.show_bank_browser))
+        toolbar.append(self._bank_button("REFRESH", self.bank_refresh, enabled=available))
+        box.append(toolbar)
         found = [entry for entry in self.bank_entries if self._bank_search.casefold() in
                  f"{entry['summary']} {entry['game']}".casefold()]
         pages = max(1, (len(found) + 11) // 12)
-        self.bank_page = min(self.bank_page, pages - 1)
+        self.bank_page = min(max(0, self.bank_page), pages - 1)
+        key = (self._bank_search, self.bank_page)
+        if key != self._bank_scroll_key:
+            self._bank_scroll_value = 0
+        self._bank_scroll_key = key
+        sc = self._bank_scroll = self.touch_scrolled_window()
+        self._bank_scroll_ready = False
+        sc.set_vexpand(True)
+        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         if not found:
-            col.append(self._bank_text("No Pokemon to show. Complete a link trade to bank what you receive, or import a Pokemon file / save."))
+            col.append(self._bank_text("No matching Pokemon. Clear the search to see all saved Pokemon." if self._bank_search
+                else "No saved Pokemon yet. Use Import File / Save on the Bank menu, or complete a link trade."))
+        queued = {entry["id"] for entry in self.bank_queue}
         for entry in found[self.bank_page * 12:(self.bank_page + 1) * 12]:
-            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
-            label = self._bank_text(f"{entry['summary']}\n{GAMES.get(entry['game'], entry['game'])} - {'Legal' if entry['legal'] else 'Legality warning'}")
+            row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+            label = Gtk.Label(label=entry["summary"], xalign=0)
             label.set_hexpand(True)
+            label.set_ellipsize(Pango.EllipsizeMode.END)
+            label.set_single_line_mode(True)
             row.append(label)
-            row.append(self._bank_button("VIEW", lambda *_, e=entry: self.bank_details(e), enabled=available))
-            col.append(row)
+            notes = [BANK_GAME_NAMES.get(entry["game"], entry["game"])]
+            if entry["id"] in queued:
+                notes.append("Queued")
+            if not entry["legal"]:
+                notes.append("Legality warning")
+            info = Gtk.Label(label=" · ".join(notes), xalign=0)
+            info.add_css_class("dim-label")
+            row.append(info)
+            button = self._bank_button("", lambda *_, e=entry: self.bank_details(e), enabled=available)
+            button.set_size_request(-1, 52)
+            button.set_child(row)
+            button.set_tooltip_text(entry["summary"])
+            col.append(button)
         sc.set_child(col)
         box.append(sc)
         nav = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
         nav.append(self._bank_button("PREVIOUS", lambda *_: self._bank_turn_page(-1), enabled=self.bank_page > 0))
-        nav.append(Gtk.Label(label=f"{self.bank_page + 1}/{pages} - {len(found)} Pokemon"))
+        count = Gtk.Label(label=f"{self.bank_page + 1}/{pages} · {len(found)} Pokemon")
+        count.set_hexpand(True)
+        nav.append(count)
         nav.append(self._bank_button("NEXT", lambda *_: self._bank_turn_page(1), enabled=self.bank_page < pages - 1))
+        nav.append(self._bank_button(f"QUEUE ({len(self.bank_queue)}/6)", self.show_bank_queue))
         box.append(nav)
+        saved_scroll = self._bank_scroll_value
+
+        def restore_scroll(adjustment):
+            nonlocal restore_handler
+            if restore_handler is None:
+                return False
+            if self.win.get_child() is box and adjustment.get_page_size() > 0:
+                adjustment.set_value(min(saved_scroll, max(0, adjustment.get_upper() - adjustment.get_page_size())))
+                self._bank_scroll_ready = True
+            elif self.win.get_child() is box:
+                return False  # Wait for the first allocation before restoring.
+            adjustment.disconnect(restore_handler)
+            restore_handler = None
+            return False
+
+        adjustment = sc.get_vadjustment()
+        restore_handler = adjustment.connect("changed", restore_scroll)
         self.win.set_child(box)
+        self._bank_glib.idle_add(restore_scroll, adjustment)
 
     def _bank_editable_silent(self):
         return (not self._bank_busy and self._bank_run is None and not self.session_control.busy
@@ -156,17 +245,28 @@ class BankUI:
 
     def _bank_turn_page(self, delta):
         self.bank_page = max(0, self.bank_page + delta)
-        self.show_bank()
+        self.show_bank_browser()
 
     def bank_refresh(self, *_):
+        origin = getattr(self, "_current_page_title", "")
+        show = self.show_bank_browser if origin == "BANK BROWSER" else self.show_bank
+
         def ready(result):
             self.bank_entries, self.bank_pending = result["entries"], result["pending"]
             held = {entry["id"] for entry in self.bank_entries}
             self.bank_queue = [entry for entry in self.bank_queue if entry["id"] in held]
             self.set_status(f"Bank: {len(self.bank_entries)} Pokemon.")
-            self.show_bank()
+            title = getattr(self, "_current_page_title", "")
+            if title == "BANK BROWSER":
+                self.show_bank_browser()
+            elif title == "POKEMON BANK":
+                self.show_bank()
+            elif title.startswith("BANK QUEUE"):
+                self.show_bank_queue()
+            elif title == origin:
+                show()
         if self._bank_action("list", {}, ready):
-            self.show_bank()
+            show()
 
     def bank_open(self, *_):
         self.show_bank()
@@ -250,18 +350,26 @@ class BankUI:
         return box
 
     def bank_details(self, entry):
+        self._bank_remember_scroll()
+        generation = self._bank_browser_generation
+
         def ready(result):
+            if (getattr(self, "_current_page_title", "") != "BANK BROWSER"
+                    or self._bank_browser_generation != generation):
+                self._bank_refresh_controls()
+                return
             entry, route = result["entry"], result["route"]
-            text = f"{entry['summary']}\nStored in: {GAMES.get(entry['game'], entry['game'])}\n{'Legal' if entry['legal'] else 'Legality warning'}\n\nTrade into {self._bank_target_name()}: {'Available' if route.get('ok') else route.get('reason', 'Unavailable')}"
+            text = f"{entry['summary']}\nStored in: {BANK_GAME_NAMES.get(entry['game'], entry['game'])}\n{'Legal' if entry['legal'] else 'Legality warning'}\n\nTrade into {self._bank_target_name()}: {'Available' if route.get('ok') else route.get('reason', 'Unavailable')}"
             note = tracker_note(route.get("home_tracker"))
             if note:
                 text += "\n\n" + note
-            box = self._bank_message("BANK POKEMON", text, self.show_bank)
+            box = self._bank_message("BANK POKEMON", text, self.show_bank_browser)
             box.append(self._bank_button("ADD TO QUEUE", lambda *_: self.bank_enqueue(entry), enabled=bool(route.get("ok"))))
             box.append(self._bank_button("DELETE BANK COPY", lambda *_: self.bank_confirm_remove(entry)))
         if self._bank_action("details", {"id": entry["id"], "game": self.bank_game,
                                       "trainer": self._bank_config["trainers"][self.bank_game]}, ready):
-            self.show_bank()
+            self.show_bank_browser()
+            generation = self._bank_browser_generation
 
     def bank_enqueue(self, entry):
         if not self._bank_editable():
@@ -273,7 +381,7 @@ class BankUI:
         else:
             self.bank_queue.append(entry)
             self.set_status(f"Queued for {self._bank_target_name()}: {len(self.bank_queue)}/6.")
-            self.show_bank()
+            self.show_bank_browser()
 
     def bank_confirm_remove(self, entry):
         if not self._bank_editable():
@@ -281,11 +389,22 @@ class BankUI:
         if any(item["id"] == entry["id"] for item in self.bank_queue):
             self.set_status("Remove this Pokemon from the queue before deleting its Bank copy.")
             return
-        box = self._bank_message("DELETE BANK COPY?", f"{entry['summary']}\n\nYour source file stays intact. PokeLDN remembers imports, so importing the same Pokemon again may report it as already imported.", self.show_bank)
+        def removed(_result):
+            self.bank_entries = [item for item in self.bank_entries if item["id"] != entry["id"]]
+            self.set_status("Bank copy deleted. Source file preserved.")
+            if getattr(self, "_current_page_title", "") == "DELETE BANK COPY?":
+                self.show_bank_browser()
+            if getattr(self, "_current_page_title", "") in ("POKEMON BANK", "BANK BROWSER"):
+                self.bank_refresh()
+            elif getattr(self, "_current_page_title", "").startswith("BANK QUEUE"):
+                self.show_bank_queue()
+
+        box = self._bank_message("DELETE BANK COPY?", f"{entry['summary']}\n\nYour source file stays intact. PokeLDN remembers imports, so importing the same Pokemon again may report it as already imported.", self.show_bank_browser)
         box.append(self._bank_button("YES - DELETE BANK COPY", lambda *_: self._bank_action(
-            "remove", {"id": entry["id"]}, lambda _result: self.bank_refresh())))
+            "remove", {"id": entry["id"]}, removed)))
 
     def show_bank_queue(self, *_):
+        self._bank_remember_scroll()
         Gtk = self._bank_gtk
         box = self.page(f"BANK QUEUE - {self._bank_target_name()}", self.show_bank)
         available = self._bank_editable_silent()
@@ -480,6 +599,8 @@ class BankUI:
             self.show_bank_queue()
         elif title == "POKEMON BANK":
             self.show_bank()
+        elif title == "BANK BROWSER":
+            self.show_bank_browser()
 
     def _bank_run_error(self, token, error):
         run = self._bank_run

@@ -5,7 +5,7 @@ TradeBox v0.5.0 uses PokeLDN **v0.24.0+ / Program API 1.4** for Bank imports, re
 ## Import and browse
 
 1. Stop any host and wait for shutdown/reset to finish.
-2. Open **POKEMON BANK** on Home. Choose **REFRESH** to load the records.
+2. Open **POKEMON BANK** on Home. Records refresh automatically. Choose **BROWSE POKEMON** to open the dedicated list page.
 3. Choose **TRADE INTO** to select Z-A, Sword/Shield, BDSP, FireRed, or LeafGreen. Clear the queue before changing its destination.
 4. Choose **IMPORT FILE / SAVE**, read the trainer information, then **CHOOSE FILE / SAVE**. Pick a local Pokemon file or save that PKHeX supports, including extensionless saves such as `main`.
 5. Review the added, already-imported, and refused counts. Conversion notes and up to 30 detailed warnings/refusals are displayed. One refused record does not prevent other records from being imported.
@@ -14,7 +14,7 @@ Your original file is read without being changed. Supported native records keep 
 
 PokeLDN remembers imports even after a record has been traded away or deleted. Reimporting the same file can therefore report **Already imported** instead of creating another copy.
 
-The list shows 12 records per page. Type a search and tap **SEARCH** (or press Enter). **VIEW** shows the original summary, legality, and conversion availability for the selected destination. Conversion refusals and HOME tracker warnings are shown when reported by the API.
+The browser gives most of the 800×480 screen to the Pokemon list, with compact rows and a wide touch scrollbar. Swipe the list or drag the scrollbar; **PREVIOUS** and **NEXT** move between pages of 12 records. Search and refresh share one toolbar. Tap a Pokemon row to see its full summary, legality, and conversion availability for the selected destination. Returning from details keeps your search, page, and scroll position. The browser also provides a **QUEUE** shortcut; import and destination controls stay on the Bank menu, reached with **BACK**. Conversion refusals and HOME tracker warnings are shown when reported by the API.
 
 **DELETE BANK COPY** asks for confirmation and leaves the source file intact. Remove an entry from the queue before deleting it. A deleted entry can still be remembered as an earlier import.
 

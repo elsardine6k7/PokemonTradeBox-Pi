@@ -23,7 +23,7 @@ class BankCallbacksTests(unittest.TestCase):
         keys = self.root / "keys"
         keys.write_text("test", encoding="utf-8")
         self.app._bank_config["prod_keys"] = str(keys)
-        (self.root / "logs").mkdir()
+        (self.root / "logs").mkdir(exist_ok=True)
         self.app.bank_queue = [{"id": "first", "summary": "First"}, {"id": "second", "summary": "Second"}]
 
     def prepared(self):
@@ -256,6 +256,162 @@ class BankCallbacksTests(unittest.TestCase):
         self.assertIsNone(self.app._bank_run)
         self.assertEqual(len(self.app.bank_queue), 2)
         self.assertIn("Host executable missing", self.app.current_label)
+
+    def configure_navigation(self, title="BANK BROWSER"):
+        self.configure()
+        self.shown, self.messages = [], []
+
+        def show(title):
+            self.app._current_page_title = title
+            if title == "BANK BROWSER":
+                self.app._bank_browser_generation = getattr(self.app, "_bank_browser_generation", 0) + 1
+            self.shown.append(title)
+
+        self.app.show_bank = lambda *_: show("POKEMON BANK")
+        self.app.show_bank_browser = lambda *_: show("BANK BROWSER")
+        self.app.show_bank_queue = lambda *_: show("BANK QUEUE - Legends Z-A")
+        self.app._current_page_title = title
+
+        def message(title, text, back):
+            show(title)
+            actions = []
+            self.messages.append((title, text, back, actions))
+            return actions
+
+        self.app._bank_message = message
+        self.app._bank_button = lambda label, callback, **kwargs: (label, callback, kwargs)
+        self.entry = {"id": "first", "summary": "Dragonite, level 100", "game": "swsh", "legal": True}
+        self.app.bank_entries = [self.entry]
+        self.app.bank_page, self.app._bank_search = 2, "Dragonite"
+
+    def test_refresh_keeps_browser_search_and_page_and_reconciles_queue(self):
+        self.configure_navigation()
+        self.app.bank_refresh()
+        self.assertEqual(self.shown, ["BANK BROWSER"])
+        self.assertTrue(self.app._bank_busy)
+        self.rpc[-1][2]({"entries": [self.entry], "pending": []}, "")
+        self.assertEqual(self.shown, ["BANK BROWSER", "BANK BROWSER"])
+        self.assertEqual((self.app._bank_search, self.app.bank_page), ("Dragonite", 2))
+        self.assertEqual([entry["id"] for entry in self.app.bank_queue], ["first"])
+        self.assertFalse(self.app._bank_busy)
+
+    def test_refresh_callback_updates_records_without_leaving_new_page(self):
+        for destination in ("POKEMON BANK", "BANK QUEUE - Legends Z-A", "BANK POKEMON"):
+            with self.subTest(destination=destination):
+                self.configure_navigation()
+                self.app.bank_refresh()
+                self.app._current_page_title = destination
+                self.shown.clear()
+                updated = dict(self.entry, summary="Refreshed Dragonite")
+                self.rpc[-1][2]({"entries": [updated], "pending": []}, "")
+                self.assertEqual(self.app.bank_entries, [updated])
+                self.assertEqual(self.app._current_page_title, destination)
+                self.assertEqual(self.shown, [destination] if destination != "BANK POKEMON" else [])
+                self.assertFalse(self.app._bank_busy)
+
+    def test_browser_request_error_returns_to_browser_unless_user_left(self):
+        for destination in ("BANK BROWSER", "POKEMON BANK", "BANK QUEUE - Legends Z-A"):
+            with self.subTest(destination=destination):
+                self.configure_navigation()
+                self.app.bank_refresh()
+                self.app._current_page_title = destination
+                self.shown.clear()
+                self.rpc[-1][2](None, "Bank temporarily unavailable")
+                self.assertEqual(self.shown, [destination])
+                self.assertEqual(self.app._current_page_title, destination)
+                self.assertFalse(self.app._bank_busy)
+                self.assertIn("temporarily unavailable", self.app.current_label)
+
+    def test_details_back_and_enqueue_return_to_same_browser_page(self):
+        self.configure_navigation()
+        self.app.bank_queue = []
+        self.app.bank_details(self.entry)
+        self.assertEqual(self.rpc[-1][0], "details")
+        self.rpc[-1][2]({"entry": self.entry, "route": {"ok": True}}, "")
+        title, _text, back, actions = self.messages[-1]
+        self.assertEqual(title, "BANK POKEMON")
+        back()
+        self.assertEqual(self.app._current_page_title, "BANK BROWSER")
+        self.assertEqual((self.app._bank_search, self.app.bank_page), ("Dragonite", 2))
+        add_to_queue = next(callback for label, callback, _kwargs in actions if label == "ADD TO QUEUE")
+        add_to_queue()
+        self.assertEqual(self.app.bank_queue, [self.entry])
+        self.assertEqual(self.app._current_page_title, "BANK BROWSER")
+        self.assertEqual((self.app._bank_search, self.app.bank_page), ("Dragonite", 2))
+
+    def test_details_response_does_not_reopen_record_after_leaving_browser(self):
+        self.configure_navigation()
+        self.app.bank_details(self.entry)
+        self.app.show_bank()
+        self.shown.clear()
+        self.rpc[-1][2]({"entry": self.entry, "route": {"ok": True}}, "")
+        self.assertEqual(self.app._current_page_title, "POKEMON BANK")
+        self.assertEqual(self.messages, [])
+        self.assertEqual(self.shown, ["POKEMON BANK"])
+        self.assertFalse(self.app._bank_busy)
+
+    def test_details_response_does_not_open_record_after_browser_navigation(self):
+        for navigation in ("next", "search", "reenter"):
+            with self.subTest(navigation=navigation):
+                self.configure_navigation()
+                self.app.bank_details(self.entry)
+                if navigation == "next":
+                    self.app._bank_turn_page(1)
+                elif navigation == "search":
+                    self.app._bank_search = "Pikachu"
+                    self.app.bank_page = 0
+                    self.app.show_bank_browser()
+                else:
+                    self.app.show_bank()
+                    self.app.show_bank_browser()
+                self.messages.clear()
+                self.rpc[-1][2]({"entry": self.entry, "route": {"ok": True}}, "")
+                self.assertEqual(self.app._current_page_title, "BANK BROWSER")
+                self.assertEqual(self.messages, [])
+                self.assertFalse(self.app._bank_busy)
+
+    def test_details_completion_refreshes_queue_controls_if_user_opened_queue(self):
+        for error in ("", "Bank temporarily unavailable"):
+            with self.subTest(error=error):
+                self.configure_navigation()
+                self.app.bank_details(self.entry)
+                self.app.show_bank_queue()
+                self.shown.clear()
+                self.rpc[-1][2]({"entry": self.entry, "route": {"ok": True}} if not error else None, error)
+                self.assertEqual(self.app._current_page_title, "BANK QUEUE - Legends Z-A")
+                self.assertEqual(self.shown, ["BANK QUEUE - Legends Z-A"])
+                self.assertEqual(self.messages, [])
+                self.assertFalse(self.app._bank_busy)
+
+    def test_remove_failure_returns_to_browser_with_search_and_page_intact(self):
+        self.configure_navigation()
+        self.app.bank_queue = []
+        self.app.bank_confirm_remove(self.entry)
+        _title, _text, back, actions = self.messages[-1]
+        back()
+        self.assertEqual(self.app._current_page_title, "BANK BROWSER")
+        self.app.bank_confirm_remove(self.entry)
+        self.messages[-1][3][0][1]()
+        self.assertEqual(self.rpc[-1][0], "remove")
+        self.rpc[-1][2](None, "Bank is read-only")
+        self.assertEqual(self.app._current_page_title, "BANK BROWSER")
+        self.assertEqual((self.app._bank_search, self.app.bank_page), ("Dragonite", 2))
+        self.assertEqual(self.app.bank_entries, [self.entry])
+
+    def test_remove_response_updates_records_without_reopening_browser_after_leaving(self):
+        self.configure_navigation()
+        self.app.bank_queue = []
+        self.app.bank_confirm_remove(self.entry)
+        self.messages[-1][3][0][1]()
+        self.assertEqual(self.rpc[-1][0], "remove")
+        self.app._current_page_title = "BANK QUEUE - Legends Z-A"
+        self.shown.clear()
+        self.rpc[-1][2]({}, "")
+        self.assertEqual(self.app.bank_entries, [])
+        self.assertEqual(self.app._current_page_title, "BANK QUEUE - Legends Z-A")
+        self.assertEqual(self.shown, ["BANK QUEUE - Legends Z-A"])
+        self.assertEqual(len(self.rpc), 1)
+        self.assertFalse(self.app._bank_busy)
 
 
 if __name__ == "__main__":

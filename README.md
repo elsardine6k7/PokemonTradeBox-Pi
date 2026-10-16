@@ -1,6 +1,6 @@
 # PokemonTradeBox-Pi
 
-**Current version: v0.4.3**
+**Current version: v0.5.0**
 
 Touchscreen Raspberry Pi frontend for [pokeldn](https://github.com/Decryptu/pokeldn).
 
@@ -23,13 +23,14 @@ Portable 800×480 Raspberry Pi trade-box UI with touch-friendly Pokémon buildin
 - responsive STOP and exclusive radio operations during shutdown, reset, and firmware work
 - pokeldn / PKHeX status page
 - startup diagnostics with Retry, offline editing when the ESP32 is disconnected, and configured-path install checks
+- Bank imports, automatic banking of confirmed received Pokemon, browsing, conversion previews, and a six-slot trade queue through stable API 1.4
 - Labwc autostart helper
 
 The original setup was tested on a Raspberry Pi 4, an 800×480 DSI touchscreen, and a CP2102 ESP32 radio. The custom FR/LG Wonder Card builder has been tested end-to-end in-game, and the v0.4.0 ESP32 firmware manager was tested end-to-end on a classic ESP32/CP2102, including downloading, verifying, flashing, and re-checking official pokeldn radio firmware.
 
 ## Requirements
 
-Install and verify [pokeldn](https://github.com/Decryptu/pokeldn) **v0.23.0 or newer** first. TradeBox v0.4.3 relies on pokeldn's Program Surface 1.3, including native Sword/Shield gift Nature support. The default config expects pokeldn at `~/pokeldn`.
+Install and verify [pokeldn](https://github.com/Decryptu/pokeldn) **v0.23.0 or newer** first. The Bank feature needs **v0.24.0+ / Program API 1.4**. Other TradeBox tools use Program Surface 1.3, including native Sword/Shield gift Nature support. The default config expects pokeldn at `~/pokeldn`.
 
 You must provide your own compatible hardware, `prod.keys`, and trainer metadata. This repository does not contain console keys, ROMs, saves, or Nintendo game data.
 
@@ -48,7 +49,17 @@ The ESP32 firmware manager uses pokeldn's stable `gui.board` API and `esptool`. 
 
 ## pokeldn compatibility
 
-TradeBox v0.4.2 requires **pokeldn v0.23.0+** and targets pokeldn's documented **Program Surface 1.3** (API major 1): the Pokémon builder, Sword/Shield gift builder, FireRed/LeafGreen gift builder, gift-file helpers, and `gui.board`. Upstream tests resolve those supported names so a separate frontend can rely on them without depending on private implementation details.
+TradeBox v0.5.0 uses pokeldn's documented **Program Surface 1.3** (API major 1) for the Pokémon builder, gift builders, gift-file helpers, and `gui.board`, plus **API 1.4** for Bank operations and confirmed trade completion. Upstream tests resolve those supported names so a separate frontend can rely on them without depending on private implementation details.
+
+The Pi installation is validated with **PokeLDN v0.25.0 / API 1.4**.
+
+## Pokemon Bank (v0.5.0)
+
+Open **POKEMON BANK** on Home to import a Pokémon file or save, browse stored records, choose a trade destination, and queue up to six different Pokémon. Converted offers are shown before starting the host. Only confirmed completed trades remove Bank records; cancelling or stopping preserves the uncompleted records. Keep the host running while the Switch finishes saving, then exit trading on the Switch so PokeLDN can close the connection normally.
+
+Pokemon received from the retail game in regular link trades and Bank trades are automatically added after confirmed completion, as PokeLDN writes the received files. Final host shutdown also collects any late files. **IMPORT FILE / SAVE** remains available.
+
+TradeBox keeps its Bank separately from the desktop app and performs Bank work in PokeLDN's venv. Current trade destinations are Z-A, Sword/Shield, BDSP, FireRed, and LeafGreen. See [Bank usage and Pi test checklist](docs/bank.md) for imports, trainer selection, recovery, and saved received files.
 
 TradeBox also follows pokeldn's launcher shutdown contract: it sends **SIGINT only to the PID it started**, waits up to 15 seconds for a clean exit, then sends **SIGTERM** if needed. It does not use `pkill -f` or match launcher names, so it will not stop a pokeldn run started by another program.
 

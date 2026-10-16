@@ -141,6 +141,7 @@ class StartupReport:
     api: str = "Unknown"
     serial_ready: bool = False
     firmware_ready: bool = False
+    bank_ready: bool = False
 
     @property
     def ready(self):
@@ -200,6 +201,14 @@ def probe_backend(repo: Path, *, pkhex: bool) -> dict:
         for module, names in SURFACE.items():
             _surface(module, names)
         result.update(ok=True, version=version)
+        if pkhex and api.level >= 4:
+            try:
+                _surface("pokeldn.app.bank", ("entries", "find", "import_file", "deposit", "destinations", "offer", "remove", "TradeSession", "TradeSession.advance"))
+                _surface("pokeldn.app.received", ("trades_done",))
+                _surface("pokeldn.pokemon", ("SERVICE.check",))
+                result["bank_ready"] = True
+            except Exception as exc:
+                result["bank_warning"] = f"Bank API unavailable: {exc}. Check your PokeLDN v0.24.0+ installation."
     except Exception as exc:
         result["error"] = f"PokeLDN import/API check failed ({type(exc).__name__}): {exc}"
         return result
@@ -299,6 +308,9 @@ def check_startup(path: Path, app_dir: Path, *, runner=run_probe, frontend_pytho
                 report.api = result.get("api", "Unknown")
                 report.species = result.get("species", {})
                 report.firmware_ready = result.get("firmware_ready", False)
+                report.bank_ready = result.get("bank_ready", False)
+                if result.get("bank_warning"):
+                    report.checks.append(Check("Bank API", "warning", result["bank_warning"]))
                 if result.get("firmware_warning"):
                     report.checks.append(Check("Firmware tools", "warning", result["firmware_warning"]))
             else:

@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.5.0
+
+- automatically banked confirmed received Pokemon from regular and Bank trades, preserving received bytes and legality warnings
+- tracked received files by unique run and trade number, with retry/recovery journaling and duplicate handling
+- added a touchscreen Bank using PokeLDN's documented API 1.4
+- imported Pokemon files and saves without changing their sources, with duplicate/refusal counts and conversion notes
+- added paginated browsing/search, destination checks, and explicit Bank-copy deletion
+- moved browsing onto its own touchscreen page, with compact touch rows and preserved search, page, and scroll position
+- added a six-slot ordered Bank queue for Z-A, Sword/Shield, BDSP, and FR/LG, with converted-offer confirmation before hosting
+- preserved banked Pokemon identities by omitting --fresh-pid and using the native launcher flags
+- removed Bank records only through TradeSession.advance() from confirmed launcher completion lines; kept the host connected through the Switch's save and room-exit handshakes
+- prevented Bank progress/inspection errors from interrupting a running host while the Switch saves
+- drained final confirmations before resetting or replacing a Bank host, preserving uncompleted records on STOP
+- isolated Bank work in the backend venv and a separate Bank folder, with a single-writer lock
+- saved run receipts and logs for explicit reconciliation after interrupted workers or app restarts
+- ignored stale callbacks and refused reconciliation while the recorded host is still alive
+- kept the other TradeBox tools available on API 1.3; Bank requires API 1.4
+- verified compatibility with PokeLDN v0.25.0 and Program API 1.4 on the Pi
+- added Bank, callback, worker, and 800x480 GTK layout checks
+- Rick confirmed a Bank Metapod trade completes saving, returns to trade selection, exits through CANCEL/YES, and leaves the Pokemon on the Switch; received duplicate handling and clean host shutdown also passed
+
 ## v0.4.3
 
 - opened the touchscreen before loading configuration or PokeLDN dependencies

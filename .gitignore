@@ -1,6 +1,9 @@
 config.json
 logs/
 gifts/
+bank/
+bank-data/
+received-bank/
 autostart.log
 __pycache__/
 *.pyc

@@ -1,5 +1,7 @@
 # Setup
 
+For Bank imports and trades in v0.5.0, use PokeLDN v0.24.0+ / stable API 1.4. See the [Bank guide and Pi checks](bank.md). Existing tools still use API 1.3.
+
 Copy `config.example.json` to `config.json` and enter your own trainer metadata.
 
 For Sword / Shield, Brilliant Diamond / Shining Pearl, and Legends Z-A, pokeldn's builder/host uses raw trainer ID values. These may differ from the formatted IDs displayed in-game.

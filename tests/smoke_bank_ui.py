@@ -183,6 +183,20 @@ def main():
     check("Prepared queue and cancellation controls", "BANK QUEUE")
     app.bank_cancel_prepared()
     check("Cancelled queue", "BANK QUEUE")
+    app.bank_queue = []
+    app._bank_run = {"state": "active", "error": ""}
+    app.set_status("Queue exchanged. Let the Switch finish saving, then exit trading on the Switch. Keep the host running until you have left.")
+    app.show_bank_queue()
+    check("Completed queue waiting for Switch save and exit", "BANK QUEUE")
+    if buttons("PREPARE TRADE")[0].get_sensitive():
+        raise AssertionError("Another Bank queue must wait for the current host to finish")
+    app._bank_run["error"] = "Cannot inspect received Pokemon"
+    app.set_status("Bank needs attention: Cannot inspect received Pokemon. Keep the host running until the Switch finishes saving and exits trading, then use RETRY BANK FINISH in Bank.")
+    app.show_bank_queue()
+    check("Bank inspection failure while Switch finishes saving", "BANK QUEUE")
+    if not buttons("RETRY BANK FINISH"):
+        raise AssertionError("Retry must remain accessible after the Switch exits")
+    app._bank_run = None
     app.bank_pending = [{"token": "c" * 32, "game": "za", "pid": None, "live": False}]
     app.show_bank()
     check("Unfinished run", "POKEMON BANK")

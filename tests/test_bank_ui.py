@@ -96,15 +96,81 @@ class BankCallbacksTests(unittest.TestCase):
         self.assertEqual(self.resets, ["reset"])
         self.assertFalse(self.app.poll_process(old))
 
-    def test_completed_queue_automatically_stops_only_its_host(self):
+    def test_completed_queue_keeps_host_alive_through_repeated_progress(self):
         self.configure()
         run = self.active()
+        proc = run["proc"]
         unrelated = Process(pid=999)
-        self.assertTrue(self.app._bank_poll_progress(run["token"]))
-        self.rpc[-1][2]({"token": run["token"], "completed": 2, "total": 2}, "")
-        self.assertEqual(len(run["proc"].signals), 1)
+        for _ in range(3):
+            self.assertTrue(self.app._bank_poll_progress(run["token"]))
+            self.rpc[-1][2]({"token": run["token"], "completed": 2, "total": 2}, "")
+            self.assertTrue(self.app.poll_process(proc))
+        self.assertIs(self.app.proc, proc)
+        self.assertIsNone(proc.poll())
+        self.assertEqual(proc.signals, [])
         self.assertEqual(unrelated.signals, [])
         self.assertEqual(self.app.bank_queue, [])
+        self.assertIs(self.app._bank_run, run)
+        self.assertEqual(run["state"], "active")
+        self.assertFalse(self.app.session_control.busy)
+        self.assertEqual([action for action, *_ in self.rpc], ["progress"] * 3)
+        self.assertEqual(self.resets, [])
+        self.assertEqual(self.spawns, [])
+
+    def test_completed_queue_finishes_once_after_native_host_exit(self):
+        self.configure()
+        run = self.active()
+        proc = run["proc"]
+        self.app._bank_poll_progress(run["token"])
+        result = {"token": run["token"], "completed": 2, "total": 2}
+        self.rpc[-1][2](result, "")
+        self.assertTrue(self.app.poll_process(proc))
+        self.assertEqual([action for action, *_ in self.rpc], ["progress"])
+
+        proc.returncode = 0
+        self.assertTrue(self.app.poll_process(proc))
+        self.assertEqual([action for action, *_ in self.rpc], ["progress", "end"])
+        self.assertEqual(self.rpc[-1][1], {"token": run["token"], "confirm_stopped": True})
+        self.assertTrue(self.app.poll_process(proc))
+        self.assertEqual([action for action, *_ in self.rpc], ["progress", "end"])
+        self.rpc[-1][2](result, "")
+        self.assertIsNone(self.app._bank_run)
+        self.assertFalse(self.app.poll_process(proc))
+        self.assertIsNone(self.app.proc)
+        self.assertEqual(proc.signals, [])
+        self.assertFalse(self.app.session_control.busy)
+        self.assertEqual(self.resets, [])
+        self.assertEqual(self.spawns, [])
+
+    def test_progress_failure_preserves_live_host_until_exit_and_retry(self):
+        self.configure()
+        run = self.active()
+        proc = run["proc"]
+        self.app._bank_poll_progress(run["token"])
+        self.rpc[-1][2](None, "Cannot inspect received Pokemon")
+        self.assertEqual(run["error"], "Cannot inspect received Pokemon")
+        self.assertEqual(proc.signals, [])
+        self.assertFalse(self.app.session_control.busy)
+        self.assertEqual(self.resets, [])
+
+        self.app.bank_retry_finish()
+        self.assertEqual(run["error"], "Cannot inspect received Pokemon")
+        self.assertTrue(self.app._bank_poll_progress(run["token"]))
+        self.assertEqual([action for action, *_ in self.rpc], ["progress"])
+        proc.returncode = 0
+        self.assertTrue(self.app.poll_process(proc))
+        self.assertEqual([action for action, *_ in self.rpc], ["progress"])
+
+        self.app.bank_retry_finish()
+        self.assertEqual([action for action, *_ in self.rpc], ["progress", "end"])
+        self.rpc[-1][2]({"token": run["token"], "completed": 1, "total": 2}, "")
+        self.assertIsNone(self.app._bank_run)
+        self.assertFalse(self.app.poll_process(proc))
+        self.assertEqual([item["id"] for item in self.app.bank_queue], ["second"])
+        self.assertEqual(proc.signals, [])
+        self.assertFalse(self.app.session_control.busy)
+        self.assertEqual(self.resets, [])
+        self.assertEqual(self.spawns, [])
 
     def test_stale_progress_callback_cannot_discard_a_new_queue(self):
         self.configure()

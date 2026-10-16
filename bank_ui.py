@@ -419,8 +419,12 @@ class BankUI:
             row.append(self._bank_button("REMOVE", lambda *_, i=index: self.bank_remove_queued(i), enabled=available))
             col.append(row)
         if not self.bank_queue:
-            col.append(self._bank_text("The queue is empty. Add Pokemon from the Bank."))
-        col.append(self._bank_text("Preparing offers keeps their Bank copies. Only confirmed completed trades remove them. The host stops after the queue completes."))
+            if (self._bank_run is not None and self._bank_run["state"] == "active"
+                    and not self._bank_run.get("regular")):
+                col.append(self._bank_text("The queued Pokemon have been exchanged. Keep the host running while the Switch finishes saving, then exit trading on the Switch. Do not start another trade."))
+            else:
+                col.append(self._bank_text("The queue is empty. Add Pokemon from the Bank."))
+        col.append(self._bank_text("Preparing offers keeps their Bank copies. Only confirmed completed trades remove them. Finish saving and exit trading on the Switch before stopping the host."))
         sc.set_child(col)
         box.append(sc)
         if self._bank_run is not None and self._bank_run.get("error"):
@@ -562,11 +566,11 @@ class BankUI:
                     return False
                 current["progress_pending"] = False
                 if error:
-                    self._bank_run_error(token, error)
+                    self._bank_run_error(token, error, stop_host=False)
                 else:
                     self._bank_apply_progress(result)
-                    if not current.get("regular") and result["completed"] >= len(current["queue"]) and current["proc"].poll() is None and not self.session_control.busy:
-                        self.stop_current_session()
+                    # A confirmed exchange still needs the host for saving and
+                    # room-exit handshakes. PokeLDN closes after the Switch leaves.
                 return False
             self._bank_rpc("progress", {"token": token}, done)
         return True
@@ -589,7 +593,10 @@ class BankUI:
         run["received_count"] = result.get("received_count", 0)
         run["received_already"] = result.get("received_already", 0)
         if not self.session_control.busy and (run["completed"] != previous or run["received_count"] != previous_received):
-            self.set_status(f"{run['completed']} confirmed trade(s); {run['received_count']} received Pokemon added to Bank.")
+            if not run.get("regular") and run["completed"] >= len(run["queue"]):
+                self.set_status("Queue exchanged. Let the Switch finish saving, then exit trading on the Switch. Keep the host running until you have left.")
+            else:
+                self.set_status(f"{run['completed']} confirmed trade(s); {run['received_count']} received Pokemon added to Bank.")
         if run["completed"] != previous or run["received_count"] != previous_received:
             self._bank_refresh_controls()
 
@@ -602,13 +609,18 @@ class BankUI:
         elif title == "BANK BROWSER":
             self.show_bank_browser()
 
-    def _bank_run_error(self, token, error):
+    def _bank_run_error(self, token, error, *, stop_host=True):
         run = self._bank_run
         if run is None or run["token"] != token:
             return
         run["error"] = error
-        if run["proc"] is not None and run["proc"].poll() is None and not self.session_control.busy:
-            self.stop_current_session()
+        if run["proc"] is not None and run["proc"].poll() is None:
+            if not stop_host:
+                self.set_status(f"Bank needs attention: {error}. Keep the host running until the Switch finishes saving and exits trading, then use RETRY BANK FINISH in Bank.")
+                self._bank_refresh_controls()
+                return False
+            if not self.session_control.busy:
+                self.stop_current_session()
         self.set_status(f"Bank needs attention: {error}. Stop the host, then use RETRY BANK FINISH in Bank.")
 
     def _bank_finish_if_needed(self, proc):
@@ -641,7 +653,7 @@ class BankUI:
         if run is None:
             return
         if run["proc"] is not None and run["proc"].poll() is None:
-            self.set_status("The Bank host is still stopping. Wait for it to exit.")
+            self.set_status("The Bank host is still running. Finish saving and exit trading on the Switch, then wait for the host to close before retrying.")
             return
         run["error"] = ""
         if run["proc"] is None:

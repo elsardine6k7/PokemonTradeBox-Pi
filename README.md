@@ -51,11 +51,13 @@ The ESP32 firmware manager uses pokeldn's stable `gui.board` API and `esptool`. 
 
 TradeBox v0.5.0 uses pokeldn's documented **Program Surface 1.3** (API major 1) for the Pokémon builder, gift builders, gift-file helpers, and `gui.board`, plus **API 1.4** for Bank operations and confirmed trade completion. Upstream tests resolve those supported names so a separate frontend can rely on them without depending on private implementation details.
 
+The Pi installation is validated with **PokeLDN v0.25.0 / API 1.4**.
+
 ## Pokemon Bank (v0.5.0)
 
-Open **POKEMON BANK** on Home to import a Pokémon file or save, browse stored records, choose a trade destination, and queue up to six different Pokémon. Converted offers are shown before starting the host. Only confirmed completed trades remove Bank records; cancelling or stopping preserves the uncompleted records. The host stops after the queue completes.
+Open **POKEMON BANK** on Home to import a Pokémon file or save, browse stored records, choose a trade destination, and queue up to six different Pokémon. Converted offers are shown before starting the host. Only confirmed completed trades remove Bank records; cancelling or stopping preserves the uncompleted records. Keep the host running while the Switch finishes saving, then exit trading on the Switch so PokeLDN can close the connection normally.
 
-Pokemon received from the retail game in regular link trades and Bank trades are automatically added after confirmed completion. FR/LG saves them when the host finishes. **IMPORT FILE / SAVE** remains available.
+Pokemon received from the retail game in regular link trades and Bank trades are automatically added after confirmed completion, as PokeLDN writes the received files. Final host shutdown also collects any late files. **IMPORT FILE / SAVE** remains available.
 
 TradeBox keeps its Bank separately from the desktop app and performs Bank work in PokeLDN's venv. Current trade destinations are Z-A, Sword/Shield, BDSP, FireRed, and LeafGreen. See [Bank usage and Pi test checklist](docs/bank.md) for imports, trainer selection, recovery, and saved received files.
 

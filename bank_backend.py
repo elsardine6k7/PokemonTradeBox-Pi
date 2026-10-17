@@ -6,6 +6,7 @@ owns its queue, run receipts, logs, and launcher lifecycle.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import re
@@ -13,18 +14,111 @@ import sys
 from contextlib import redirect_stdout
 from dataclasses import asdict
 from pathlib import Path
+from uuid import uuid4
 
 
-GAMES = {"za": "Legends Z-A", "swsh": "Sword / Shield", "bdsp": "BDSP", "frlg": "FireRed / LeafGreen"}
-EXTENSIONS = {"za": "pa9", "swsh": "pk8", "bdsp": "pb8", "frlg": "pk3"}
+GAMES = {"za": "Legends Z-A", "sv": "Scarlet / Violet", "swsh": "Sword / Shield",
+         "bdsp": "BDSP", "frlg": "FireRed / LeafGreen"}
+EXTENSIONS = {"za": "pa9", "sv": "pk9", "swsh": "pk8", "bdsp": "pb8", "frlg": "pk3"}
+GIFT_GAMES = frozenset(("za", "sv", "bdsp"))
+GIFT_UNAVAILABLE = "Mystery Gift - Simulated requires PokeLDN's event gift tools. Update PokeLDN, then retry."
 
 
-def trade_command(repo, python, config, game, offers, received, *, version="firered", filler=None):
+def catalog_tool(game, *, gift=False, tools=None):
+    """Find a documented catalog tool, without depending on the desktop command builder."""
+    if tools is None:
+        try:
+            from pokeldn.app.catalog import GAMES as catalog_games
+        except (ImportError, AttributeError) as exc:
+            raise ValueError(GIFT_UNAVAILABLE) from exc
+        tools = {tool.key: tool for item in catalog_games for tool in item.tools}
+    key = f"{game}-{'gift-host' if gift else 'host'}"
+    try:
+        return tools[key]
+    except (KeyError, TypeError) as exc:
+        raise ValueError(GIFT_UNAVAILABLE if gift else f"PokeLDN has no {game} trade host. Update PokeLDN, then retry.") from exc
+
+
+def gift_code(game, code=None):
+    if not isinstance(game, str) or game not in GIFT_GAMES:
+        raise ValueError("Simulated gifts support Legends Z-A, Scarlet / Violet, and BDSP.")
+    code = "00000000" if code is None and game == "za" else "" if code is None else code
+    if not isinstance(code, str) or (code != "" and re.fullmatch(r"[0-9]{8}", code) is None):
+        raise ValueError("Enter an eight-digit link code, or leave it empty for Scarlet / Violet or BDSP.")
+    if game == "za" and not code:
+        raise ValueError("Legends Z-A requires an eight-digit link code.")
+    return code
+
+
+def catalog_trade_command(repo, python, config, game, tool, offers, received, *,
+                          event_keys=(), for_receiver=False, fresh=False, code=None):
+    """Keep the host's measured catalog arguments and fill its documented field defaults."""
+    repo, received = Path(repo), Path(received)
+    trainer = config["trainers"][game]
+    tokens = {"{received}": str(received.parent), "{stamp}": received.stem,
+              "{ot}": str(trainer["ot"]), "{tid}": str(trainer["tid"]),
+              "{sid}": str(trainer["sid"]), "{language}": str(trainer["language"]),
+              "{gender}": str(trainer["gender"]), "{keys}": str(config["prod_keys"])}
+    args = []
+    for arg in tool.fixed:
+        for token, replacement in tokens.items():
+            arg = arg.replace(token, replacement)
+        args.append(arg)
+    fields = tuple(tool.fields)
+    values = {field.key: field.default for field in fields}
+    values.update({"--fresh-pid": fresh, "--for-receiver": for_receiver})
+    for field in fields:
+        if field.kind == "code" and code is not None:
+            values[field.key] = code
+    for field in fields:
+        if ((getattr(field, "unless", "") and values.get(field.unless))
+                or (getattr(field, "requires", "") and not values.get(field.requires))):
+            continue
+        when = getattr(field, "when", ())
+        if when and str(values.get(when[0], "")) != when[1]:
+            continue
+        flags = field.flag if isinstance(field.flag, tuple) else (field.flag,)
+        if field.kind == "pokemon":
+            for index, offer in enumerate(offers):
+                flag = getattr(field, "more", "") if index else ""
+                flag = flag or flags[0]
+                args += ([flag] if flag else []) + [str(offer["file"])]
+            if event_keys:
+                args += [part for key in event_keys for part in ("--gift-event", key)]
+            if getattr(field, "count", ""):
+                args += [field.count, str(len(offers))]
+            continue
+        value = values[field.key]
+        if field.kind == "switch":
+            if bool(value) != getattr(field, "invert", False):
+                args += [flags[0], field.template] if getattr(field, "template", "") else list(flags)
+        elif value in ("", None):
+            args += list(getattr(field, "unset", ()))
+        else:
+            value = field.template.format(value) if getattr(field, "template", "") else str(value)
+            args += [part for flag in flags for part in ((flag, value) if flag else (value,))]
+    # The catalog chooses the output option and its shape; the run owns its unique path.
+    output_flag = "--save-theirs" if game == "bdsp" else "--offer-out"
+    if output_flag not in args:
+        raise ValueError("PokeLDN's host does not expose a received-Pokemon path. Update PokeLDN, then retry.")
+    args[args.index(output_flag) + 1] = str(received.with_suffix("") if game == "bdsp" else received)
+    if "--keys" in args:
+        args[args.index("--keys") + 1] = str(config["prod_keys"])
+    else:
+        args += ["--keys", str(config["prod_keys"])]
+    return [str(python), "-u", str(repo / tool.script), *args]
+
+
+def trade_command(repo, python, config, game, offers, received, *, version="firered", filler=None,
+                  catalog_tools=None):
     """Preserve the banked records' identities: never pass --fresh-pid."""
     trainer = config["trainers"][game]
     base = [str(python), "-u"]
     keys = ["--keys", str(config["prod_keys"])]
     files = [str(item["file"]) for item in offers]
+    if game == "sv":
+        return catalog_trade_command(repo, python, config, game,
+                                     catalog_tool(game, tools=catalog_tools), offers, received)
     if game == "za":
         cmd = base + [str(repo / "bin/za_host.py"), *keys, "--trainer-name", trainer["ot"],
                       "--offer-out", str(received), "--seconds", "900"]
@@ -83,13 +177,70 @@ def host_alive(receipt):
 
 
 class BankEngine:
-    def __init__(self, bank, received, pokemon, app_dir, repo, python):
+    def __init__(self, bank, received, pokemon, app_dir, repo, python, *, catalog_tools=None):
         self.bank, self.received, self.pokemon = bank, received, pokemon
         self.app_dir, self.repo, self.python = Path(app_dir), Path(repo), Path(python)
         self.folder = self.app_dir / "bank"
         self.data_dir = self.app_dir / "bank-data"
         self.run_dir = self.data_dir / "runs"
         self.active = None
+        self.catalog_tools = catalog_tools
+
+    def _gift_tool(self, game):
+        if not isinstance(game, str) or game not in GIFT_GAMES:
+            raise ValueError("Simulated gifts support Legends Z-A, Scarlet / Violet, and BDSP.")
+        service = self.pokemon.SERVICE
+        if not all(callable(getattr(service, name, None)) for name in ("gift_events", "gift_event")):
+            raise ValueError(GIFT_UNAVAILABLE)
+        tool = catalog_tool(game, gift=True, tools=self.catalog_tools)
+        if not any(field.kind == "pokemon" and getattr(field, "events", False) for field in tool.fields):
+            raise ValueError(GIFT_UNAVAILABLE)
+        return tool
+
+    def _gift_prepare(self, payload):
+        self._idle()
+        game = payload["game"]
+        tool = self._gift_tool(game)
+        keys = payload.get("keys")
+        if (not isinstance(keys, list) or not 1 <= len(keys) <= 6
+                or any(not isinstance(key, str) or not key for key in keys)):
+            raise ValueError("Choose one to six event Pokemon for this gift session.")
+        code = gift_code(game, payload.get("code"))
+        for_receiver = payload.get("for_receiver", True)
+        if type(for_receiver) is not bool:
+            raise ValueError("Made for the receiving player must be on or off.")
+        config = payload["config"]
+        trainer = config["trainers"][game]
+        built = []
+        for key in keys:
+            info = self.pokemon.SERVICE.gift_event(game, key, trainer, keep=False)
+            if info.get("refused"):
+                raise ValueError(f"This trainer cannot receive {info.get('title', 'this gift')}: {info['refused']}")
+            if not info.get("legal"):
+                raise ValueError(f"PKHeX refused {info.get('title', 'this gift')}: {info.get('report') or 'No legal copy could be made.'}")
+            built.append((key, info, base64.b64decode(info["data"], validate=True)))
+        for_receiver = for_receiver and any(info.get("your_ot") and not info.get("handled")
+                                           for _, info, _ in built)
+        folder = self.app_dir / "gifts" / uuid4().hex
+        offers = []
+        for index, (key, info, data) in enumerate(built, 1):
+            offer = {name: value for name, value in info.items() if name != "data"}
+            offer.update(event=key, file=str(folder / f"gift-{index}.{EXTENSIONS[game]}"),
+                         summary=f"{info.get('species', 'Pokemon')} · level {info.get('level', '?')}")
+            offers.append(offer)
+        cmd = catalog_trade_command(self.repo, self.python, config, game, tool, offers,
+                                    folder / f"received.{EXTENSIONS[game]}", event_keys=keys,
+                                    for_receiver=for_receiver, fresh=True, code=code)
+        folder.mkdir(parents=True, exist_ok=False)
+        try:
+            for offer, (_, _, data) in zip(offers, built):
+                Path(offer["file"]).write_bytes(data)
+        except Exception:
+            for path in folder.iterdir():
+                path.unlink()
+            folder.rmdir()
+            raise
+        return {"offers": offers, "cmd": cmd, "steps": list(tool.steps), "for_receiver": for_receiver}
 
     def _entry(self, entry_id):
         entry = self.bank.find(entry_id, folder=self.folder)
@@ -177,7 +328,8 @@ class BankEngine:
                 "total": len(receipt["offers"]),
                 "received_count": sum(item["state"] == "banked" for item in incoming),
                 "received_already": sum(item["state"] == "already" for item in incoming),
-                "received_entries": [item["entry"] for item in incoming if item["entry"]]}
+                "received_entries": [item["entry"] for item in incoming if item["entry"]],
+                "notices": list(receipt.get("notices", ()))[-3:]}
 
     def progress(self, token, *, final=False):
         run = self._require_run(token)
@@ -189,7 +341,16 @@ class BankEngine:
                 if run["dropping"] or len(line) > 65536:
                     run["dropping"] = False
                     continue
-                count = self.received.trades_done(line.decode("utf-8", errors="replace"))
+                text = line.decode("utf-8", errors="replace")
+                # Without the desktop pop-up protocol these are acknowledgement-only
+                # host notices. Surface their reason without treating log prose as a trade.
+                if text.startswith("[pop-up] "):
+                    notice = text[len("[pop-up] "):].strip()[:600]
+                    notices = run["receipt"].get("notices", [])
+                    if notice and notice not in notices:
+                        run["receipt"]["notices"] = [*notices, notice][-3:]
+                        run["dirty"] = True
+                count = self.received.trades_done(text)
                 if count is not None:
                     run["seen"] = max(run["seen"], count)
                     run["session"].advance(run["seen"])
@@ -216,6 +377,30 @@ class BankEngine:
         return self._result(run["receipt"])
 
     def dispatch(self, action, payload):
+        if action == "trade_prepare":
+            self._idle()
+            if payload.get("game") != "sv":
+                raise ValueError("This trade preparation supports Scarlet / Violet.")
+            offers = payload.get("offers")
+            if not isinstance(offers, list) or not 1 <= len(offers) <= 6:
+                raise ValueError("Choose one to six Pokemon for this trade session.")
+            for offer in offers:
+                if (not isinstance(offer, dict) or offer.get("legal") is not True
+                        or offer.get("bank") or offer.get("event")):
+                    raise ValueError("Build legal Scarlet / Violet Pokemon before starting this trade.")
+                if not isinstance(offer.get("file"), str) or not Path(offer["file"]).is_file():
+                    raise ValueError("A built Pokemon file is missing. Build the team again.")
+            tool = catalog_tool("sv", tools=self.catalog_tools)
+            received = self.app_dir / "received-bank" / f"sv-{uuid4().hex}.pk9"
+            cmd = catalog_trade_command(self.repo, self.python, payload["config"], "sv", tool, offers, received)
+            return {"cmd": cmd, "offers": offers, "steps": list(tool.steps)}
+        if action == "gift_catalog":
+            game = payload["game"]
+            tool = self._gift_tool(game)
+            return {"events": self.pokemon.SERVICE.gift_events(game, payload["trainer"]),
+                    "steps": list(tool.steps)}
+        if action == "gift_prepare":
+            return self._gift_prepare(payload)
         if action == "list":
             return {"entries": [asdict(entry) for entry in self.bank.entries(folder=self.folder)],
                     "pending": self.pending()}
@@ -257,13 +442,15 @@ class BankEngine:
                 if game == "frlg" and len(offers) == 1:
                     filler = self.pokemon.SERVICE.make("frlg", 25, trainer, level=5, shiny=False)["file"]
                 cmd = trade_command(self.repo, self.python, config, game, offers, received,
-                                    version=payload.get("version", "firered"), filler=filler)
+                                    version=payload.get("version", "firered"), filler=filler,
+                                    catalog_tools=self.catalog_tools)
                 receive_trades = len(offers)
             else:
                 # Regular builder trades have no outgoing Bank IDs to remove.
                 offers = [{"file": str(item["file"])} for item in payload["offers"]]
                 cmd = [str(arg) for arg in payload["cmd"]]
-                flag = {"za": "--offer-out", "swsh": "--received", "bdsp": "--save-theirs", "frlg": "-o"}[game]
+                flag = {"za": "--offer-out", "sv": "--offer-out", "swsh": "--received",
+                        "bdsp": "--save-theirs", "frlg": "-o"}[game]
                 cmd[cmd.index(flag) + 1] = str(received.with_suffix("") if game == "bdsp" else received)
                 receive_trades = int(cmd[cmd.index("--trades") + 1]) if "--trades" in cmd else 1
             log = self.app_dir / "logs" / f"bank-{token}.log"

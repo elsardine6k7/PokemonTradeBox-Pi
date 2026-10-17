@@ -1,6 +1,6 @@
 # PokemonTradeBox-Pi
 
-**Current version: v0.5.0**
+**Current version: v0.6.1**
 
 Touchscreen Raspberry Pi frontend for [pokeldn](https://github.com/Decryptu/pokeldn).
 
@@ -9,6 +9,8 @@ Portable 800×480 Raspberry Pi trade-box UI with touch-friendly Pokémon buildin
 ## Features
 
 - Legends Z-A local trades
+- Scarlet / Violet local Link Trades with the touch team builder and Showdown input
+- Mystery Gift - Simulated for Legends Z-A, Scarlet / Violet, and BDSP, with event search and a six-gift queue
 - Sword / Shield Link Trades and Mystery Gifts
 - Brilliant Diamond / Shining Pearl local Union Room trades and received-Pokémon history
 - FireRed / LeafGreen game selector, Direct Corner trades, Mystery Gift presets, Wonder News, read-only save/trainer info, and Build Your Own Wonder Card / Wonder News / Console Code tools
@@ -49,9 +51,17 @@ The ESP32 firmware manager uses pokeldn's stable `gui.board` API and `esptool`. 
 
 ## pokeldn compatibility
 
-TradeBox v0.5.0 uses pokeldn's documented **Program Surface 1.3** (API major 1) for the Pokémon builder, gift builders, gift-file helpers, and `gui.board`, plus **API 1.4** for Bank operations and confirmed trade completion. Upstream tests resolve those supported names so a separate frontend can rely on them without depending on private implementation details.
+TradeBox uses pokeldn's documented **Program Surface 1.3** (API major 1) for the Pokémon builder, gift builders, gift-file helpers, and `gui.board`, plus **API 1.4** for Bank operations and confirmed trade completion. Simulated gifts use the documented event service and built-in catalog host tools; startup detects these separately so older backends can still use the other tools.
 
-The Pi installation is validated with **PokeLDN v0.25.0 / API 1.4**.
+The Pi installation is validated with **PokeLDN v0.29.1 / API 1.8**.
+
+## Mystery Gift - Simulated (v0.6.0)
+
+Open **LEGENDS Z-A**, **SCARLET / VIOLET**, or **BRILLIANT DIAMOND / SHINING PEARL**, then **MYSTERY GIFT - SIMULATED**. Search official event Pokemon, inspect a gift, add up to six to the gift queue, and prepare them for review before starting. The console trades one Pokemon for each gift; confirmed received Pokemon are automatically banked.
+
+**Made for the receiving player** is on by default for gifts that support it. Gifts with a fixed event trainer retain that trainer. Keep the host running until the Switch finishes saving and leaves trading after the last gift. See the [gift guide](docs/simulated-gifts.md) for console steps, trainer settings, and HOME warnings.
+
+For ordinary Scarlet/Violet trades, open **SCARLET / VIOLET → LINK TRADE**, build up to six Pokemon, then start hosting. On the Switch, use **Poke Portal → Link Trade**, offline, with no Link Code. Received Pokemon are automatically banked after confirmed completion.
 
 ## Pokemon Bank (v0.5.0)
 
@@ -59,7 +69,7 @@ Open **POKEMON BANK** on Home to import a Pokémon file or save, browse stored r
 
 Pokemon received from the retail game in regular link trades and Bank trades are automatically added after confirmed completion, as PokeLDN writes the received files. Final host shutdown also collects any late files. **IMPORT FILE / SAVE** remains available.
 
-TradeBox keeps its Bank separately from the desktop app and performs Bank work in PokeLDN's venv. Current trade destinations are Z-A, Sword/Shield, BDSP, FireRed, and LeafGreen. See [Bank usage and Pi test checklist](docs/bank.md) for imports, trainer selection, recovery, and saved received files.
+TradeBox keeps its Bank separately from the desktop app and performs Bank work in PokeLDN's venv. Current trade destinations are Z-A, Scarlet/Violet, Sword/Shield, BDSP, FireRed, and LeafGreen. See [Bank usage and Pi test checklist](docs/bank.md) for imports, trainer selection, recovery, and saved received files.
 
 TradeBox also follows pokeldn's launcher shutdown contract: it sends **SIGINT only to the PID it started**, waits up to 15 seconds for a clean exit, then sends **SIGTERM** if needed. It does not use `pkill -f` or match launcher names, so it will not stop a pokeldn run started by another program.
 

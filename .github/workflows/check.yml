@@ -16,7 +16,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Check Python syntax
-        run: python -m py_compile tradebox.py esp32_manager.py session_control.py startup_checks.py bank_backend.py bank_client.py bank_ui.py
+        run: python -m py_compile tradebox.py esp32_manager.py session_control.py startup_checks.py bank_backend.py bank_client.py bank_ui.py simulated_gifts.py
       - name: Check launcher scripts
         run: bash -n install.sh start-tradebox.sh
       - name: Test startup, shutdown, and radio operation coordination
@@ -31,4 +31,6 @@ jobs:
           GSK_RENDERER: cairo
           NO_AT_BRIDGE: '1'
           GTK_A11Y: none
-        run: dbus-run-session -- xvfb-run -a /usr/bin/python3 -u tests/smoke_bank_ui.py
+        run: |
+          dbus-run-session -- xvfb-run -a /usr/bin/python3 -u tests/smoke_bank_ui.py
+          dbus-run-session -- xvfb-run -a /usr/bin/python3 -u tests/smoke_simulated_gifts.py

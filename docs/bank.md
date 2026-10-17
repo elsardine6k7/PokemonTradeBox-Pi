@@ -2,17 +2,17 @@
 
 TradeBox v0.5.0 uses PokeLDN **v0.24.0+ / Program API 1.4** for Bank imports, records, conversions, and confirmed completion. The Bank runs in the configured PokeLDN venv; the touchscreen's system Python does not need the full desktop app's dependencies. The other TradeBox tools remain usable with API 1.3.
 
-The Pi installation is validated with **PokeLDN v0.25.0 / API 1.4**. Its classic ESP32 can keep its working radio firmware; the v0.25.0 firmware change targets ESP32-S3 boards.
+The Pi installation is validated with **PokeLDN v0.29.1 / API 1.8**. Its classic ESP32 keeps its working radio firmware.
 
 ## Import and browse
 
 1. Stop any host and wait for shutdown/reset to finish.
 2. Open **POKEMON BANK** on Home. Records refresh automatically. Choose **BROWSE POKEMON** to open the dedicated list page.
-3. Choose **TRADE INTO** to select Z-A, Sword/Shield, BDSP, FireRed, or LeafGreen. Clear the queue before changing its destination.
+3. Choose **TRADE INTO** to select Z-A, Scarlet/Violet, Sword/Shield, BDSP, FireRed, or LeafGreen. Clear the queue before changing its destination.
 4. Choose **IMPORT FILE / SAVE**, read the trainer information, then **CHOOSE FILE / SAVE**. Pick a local Pokemon file or save that PKHeX supports, including extensionless saves such as `main`.
 5. Review the added, already-imported, and refused counts. Conversion notes and up to 30 detailed warnings/refusals are displayed. One refused record does not prevent other records from being imported.
 
-Your original file is read without being changed. Supported native records keep their native format. For other formats, PokeLDN chooses a compatible Bank format through its conversion rules. Imports use the configured trainer for each game. Games outside TradeBox's four trainer sections use the selected destination's trainer; its name and raw IDs are shown before choosing the file. This fills the complete seven-game trainer mapping required by PokeLDN's importer.
+Your original file is read without being changed. Supported native records keep their native format. For other formats, PokeLDN chooses a compatible Bank format through its conversion rules. Imports use the configured trainer for each game. Games outside TradeBox's five trainer sections use the selected destination's trainer; its name and raw IDs are shown before choosing the file. This fills the complete seven-game trainer mapping required by PokeLDN's importer. An older config without a Scarlet/Violet trainer uses the Z-A trainer in memory until an explicit `sv` entry is supplied.
 
 PokeLDN remembers imports even after a record has been traded away or deleted. Reimporting the same file can therefore report **Already imported** instead of creating another copy.
 
@@ -38,7 +38,7 @@ With API 1.4 available, Pokemon received from the retail game during **regular l
 
 Each host receives a unique output prefix and log. Only files belonging to confirmed trade numbers are inspected with `SERVICE.check()` and copied through `bank.deposit()`. Merely offering a Pokemon, cancelling, or a successful process exit does not bank it. The original received bytes are preserved, including any legality warning reported by PKHeX; conversion checks still apply before trading it out. Identical bytes already held in the Bank do not create another copy.
 
-Z-A, Sword/Shield, and BDSP can bank confirmed records while hosting. FR/LG received files are banked when PokeLDN writes them; final shutdown also collects any late files. Regular hosts retain their existing duration and trade behavior. A confirmed exchange is not a safe point to disconnect: Bank queue hosts stay connected while the Switch saves and exits trading.
+Z-A, Scarlet/Violet, Sword/Shield, and BDSP can bank confirmed records while hosting, including simulated gift trades. FR/LG received files are banked when PokeLDN writes them; final shutdown also collects any late files. Regular hosts retain their existing duration and trade behavior. A confirmed exchange is not a safe point to disconnect: Bank queue hosts stay connected while the Switch saves and exits trading.
 
 Received files remain under `~/PokemonTradeBox/received-bank/`, with a unique prefix per run (relative to your actual TradeBox installation). Sword/Shield and BDSP's Received pages include these files. Existing files from older runs are left for manual import because they lack the new confirmation tracking.
 

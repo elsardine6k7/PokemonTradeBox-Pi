@@ -25,7 +25,7 @@ DEFAULT_CONFIG = {
     "frlg_version": "firered",
     "trainers": {
         game: {"ot": "PLAYER", "tid": 0, "sid": 0, "language": 2, "gender": 0}
-        for game in ("za", "swsh", "bdsp", "frlg")
+        for game in ("za", "sv", "swsh", "bdsp", "frlg")
     },
 }
 
@@ -87,6 +87,10 @@ def load_config(path: Path) -> dict:
         languages = (1, 2, 3, 4, 5, 7) if game == "frlg" else (1, 2, 3, 4, 5, 7, 8, 9, 10)
         if type(trainer["language"]) is not int or trainer["language"] not in languages:
             raise ConfigError(f"trainers.{game}.language must be one of {', '.join(map(str, languages))}.")
+    if "sv" not in trainers:
+        # Older configs used the selected Bank trainer for games without their
+        # own setting, normally Z-A. Keep that identity until S/V is configured.
+        cfg["trainers"]["sv"] = copy.deepcopy(cfg["trainers"]["za"])
     return cfg
 
 
@@ -142,6 +146,7 @@ class StartupReport:
     serial_ready: bool = False
     firmware_ready: bool = False
     bank_ready: bool = False
+    simulated_gifts_ready: bool = False
 
     @property
     def ready(self):
@@ -181,7 +186,8 @@ def _surface(module_name, names):
 
 def probe_backend(repo: Path, *, pkhex: bool) -> dict:
     sys.path.insert(0, str(repo))
-    result = {"ok": False, "serial_ready": False, "firmware_ready": False}
+    result = {"ok": False, "serial_ready": False, "firmware_ready": False,
+              "simulated_gifts_ready": False}
     try:
         pokeldn = importlib.import_module("pokeldn")
         if Path(pokeldn.__file__).resolve().parent.parent != repo.resolve():
@@ -209,6 +215,18 @@ def probe_backend(repo: Path, *, pkhex: bool) -> dict:
                 result["bank_ready"] = True
             except Exception as exc:
                 result["bank_warning"] = f"Bank API unavailable: {exc}. Check your PokeLDN v0.24.0+ installation."
+        if pkhex:
+            try:
+                _surface("pokeldn.pokemon", ("SERVICE.gift_events", "SERVICE.gift_event"))
+                catalog = importlib.import_module("pokeldn.app.catalog")
+                for game in ("za", "sv", "bdsp"):
+                    tools = next((item.tools for item in catalog.GAMES if item.key == game), ())
+                    tool = next((item for item in tools if item.key == f"{game}-gift-host"), None)
+                    if tool is None or not any(getattr(field, "events", False) for field in tool.fields):
+                        raise ValueError(f"Missing simulated gift tool: {game}-gift-host")
+                result["simulated_gifts_ready"] = True
+            except Exception as exc:
+                result["simulated_gifts_warning"] = f"Mystery Gift - Simulated unavailable: {exc}. Update PokeLDN to enable it."
     except Exception as exc:
         result["error"] = f"PokeLDN import/API check failed ({type(exc).__name__}): {exc}"
         return result
@@ -230,6 +248,15 @@ def probe_backend(repo: Path, *, pkhex: bool) -> dict:
             if not all(counts.values()):
                 raise ValueError("A required species catalog was empty.")
             result["species"] = counts
+            if result["simulated_gifts_ready"]:
+                try:
+                    count = len(service.species("sv"))
+                    if not count:
+                        raise ValueError("The Scarlet/Violet species catalog was empty.")
+                    counts["sv"] = count
+                except Exception as exc:
+                    result["simulated_gifts_ready"] = False
+                    result["simulated_gifts_warning"] = f"Mystery Gift - Simulated unavailable: {exc}. Check PokeLDN's PKHeX service, then tap Retry."
         except Exception as exc:
             result.update(ok=False, error=f"PKHeX check failed: {exc}. Check its build/runtime, then tap Retry.")
     return result
@@ -309,8 +336,11 @@ def check_startup(path: Path, app_dir: Path, *, runner=run_probe, frontend_pytho
                 report.species = result.get("species", {})
                 report.firmware_ready = result.get("firmware_ready", False)
                 report.bank_ready = result.get("bank_ready", False)
+                report.simulated_gifts_ready = result.get("simulated_gifts_ready", False)
                 if result.get("bank_warning"):
                     report.checks.append(Check("Bank API", "warning", result["bank_warning"]))
+                if result.get("simulated_gifts_warning"):
+                    report.checks.append(Check("Mystery Gift - Simulated", "warning", result["simulated_gifts_warning"]))
                 if result.get("firmware_warning"):
                     report.checks.append(Check("Firmware tools", "warning", result["firmware_warning"]))
             else:

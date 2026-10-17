@@ -5,6 +5,7 @@
   "frlg_version": "firered",
   "trainers": {
     "za": {"ot": "YOUR_OT", "tid": 0, "sid": 0, "language": 2, "gender": 0},
+    "sv": {"ot": "YOUR_OT", "tid": 0, "sid": 0, "language": 2, "gender": 0},
     "swsh": {"ot": "YOUR_OT", "tid": 0, "sid": 0, "language": 2, "gender": 0},
     "bdsp": {"ot": "YOUR_OT", "tid": 0, "sid": 0, "language": 2, "gender": 0},
     "frlg": {"ot": "YOUR_OT", "tid": 0, "sid": 0, "language": 2, "gender": 0}

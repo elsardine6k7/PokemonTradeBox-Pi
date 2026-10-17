@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.6.1
+
+- added the missing Scarlet/Violet Link Trade menu and connected the existing touch team/Showdown builder to PokeLDN's native host settings
+- retained local trading without a code, legal-offer checks, automatic received-Pokemon banking, and native save/exit handling
+- Rick confirmed BDSP simulated Mystery Gift delivery works on the Switch
+
+## v0.6.0
+
+- added Mystery Gift - Simulated for Legends Z-A, Scarlet/Violet, and BDSP using PokeLDN's event service and native catalog hosts
+- added searchable event lists, gift details and HOME warnings, separate six-gift queues, and prepared-offer review before hosting
+- enabled receiving-player trainer handling where supported; retained fixed event trainers and surfaced host fallback notices in the gift queue
+- added Scarlet/Violet trainer configuration, Bank destinations, and confirmed received-Pokemon banking
+- kept the host connected through saving and exit; gift trades never remove existing outgoing Bank records
+- detected simulated gift support separately at startup so existing tools remain usable with older backends
+- arranged the eight home actions in a touchscreen grid
+
 ## v0.5.0
 
 - automatically banked confirmed received Pokemon from regular and Bank trades, preserving received bytes and legality warnings

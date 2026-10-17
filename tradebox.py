@@ -22,6 +22,7 @@ from pathlib import Path
 
 from session_control import SessionControl
 from bank_ui import BankUI
+from simulated_gifts import SimulatedGiftUI
 from startup_checks import (
     DEFAULT_CONFIG, Check, StartupReport, check_startup, config_path,
     find_radio, key_problem, radio_problem,
@@ -29,7 +30,7 @@ from startup_checks import (
 
 HOME = Path.home()
 APP_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.5.0"
+APP_VERSION = "0.6.1"
 CONFIG_PATH = config_path(APP_DIR)
 
 # Harmless placeholders until the window is visible and startup checks pass.
@@ -95,7 +96,7 @@ def entry_int(entry: Gtk.Entry, default=0) -> int:
     return int(raw) if raw else default
 
 
-class TradeBox(BankUI, Gtk.Application):
+class TradeBox(SimulatedGiftUI, BankUI, Gtk.Application):
     def __init__(self):
         super().__init__(application_id="com.rick.pokemontradebox")
         self.win = None
@@ -118,6 +119,7 @@ class TradeBox(BankUI, Gtk.Application):
         self._startup_busy = False
         self._backend_ready = False
         self._init_bank(APP_DIR, Gtk, GLib)
+        self._init_simulated_gifts()
 
     def do_activate(self):
         if self.win is not None:
@@ -226,6 +228,7 @@ class TradeBox(BankUI, Gtk.Application):
             TRAINERS = CONFIG["trainers"]
             gifts, pokemon, swgift, frgift, swevents = modules
             self._configure_bank(CONFIG, report.bank_ready)
+            self._configure_simulated_gifts(report.simulated_gifts_ready and report.bank_ready)
             self.name_cache.clear()
             self.set_status("Ready. Check Settings for startup warnings." if report.warnings else "Ready.")
             if not report.warnings:
@@ -378,13 +381,15 @@ class TradeBox(BankUI, Gtk.Application):
             self.show_startup()
             return
         box = self.page("POKÉMON TRADE BOX")
-        box.append(self.button("LEGENDS Z-A", self.show_za))
-        box.append(self.button("SWORD / SHIELD", self.show_swsh))
-        box.append(self.button("BRILLIANT DIAMOND / SHINING PEARL", self.show_bdsp))
-        box.append(self.button("FIRE RED / LEAF GREEN", self.show_frlg))
-        box.append(self.button("POKEMON BANK", self.bank_open))
-        box.append(self.button("ESP32 / FIRMWARE", self.show_esp32))
-        box.append(self.button("SETTINGS", self.show_settings))
+        grid = Gtk.Grid(column_spacing=5, row_spacing=5, column_homogeneous=True, row_homogeneous=True)
+        grid.set_vexpand(True)
+        actions = [("LEGENDS Z-A", self.show_za), ("SCARLET / VIOLET", self.show_sv),
+                   ("SWORD / SHIELD", self.show_swsh), ("BRILLIANT DIAMOND /\nSHINING PEARL", self.show_bdsp),
+                   ("FIRE RED / LEAF GREEN", self.show_frlg), ("POKEMON BANK", self.bank_open),
+                   ("ESP32 / FIRMWARE", self.show_esp32), ("SETTINGS", self.show_settings)]
+        for index, (label, callback) in enumerate(actions):
+            grid.attach(self.button(label, callback), index % 2, index // 2, 1, 1)
+        box.append(grid)
         self.win.set_child(box)
 
 
@@ -1332,7 +1337,13 @@ class TradeBox(BankUI, Gtk.Application):
     # ---------- Z-A ----------
 
     def show_za(self, *_):
-        self.showdown_editor("LEGENDS Z-A", "za", self.host_za, self.show_home)
+        box = self.page("LEGENDS Z-A", self.show_home)
+        box.append(self.button("LINK TRADE", self.show_za_trade))
+        box.append(self.button("MYSTERY GIFT - SIMULATED", lambda *_: self.show_simulated_gifts("za")))
+        self.win.set_child(box)
+
+    def show_za_trade(self, *_):
+        self.showdown_editor("Z-A • LINK TRADE", "za", self.host_za, self.show_za)
 
     def host_za(self, button, view):
         if self._radio_is_busy():
@@ -1361,6 +1372,60 @@ class TradeBox(BankUI, Gtk.Application):
 
         self.launch(cmd, f"Z-A hosting {min(len(infos), 6)} offer(s)", bank_game="za", offers=infos[:6])
 
+    # ---------- Scarlet / Violet ----------
+
+    def show_sv(self, *_):
+        box = self.page("SCARLET / VIOLET", self.show_home)
+        box.append(self.button("LINK TRADE", self.show_sv_trade))
+        box.append(self.button("MYSTERY GIFT - SIMULATED", lambda *_: self.show_simulated_gifts("sv")))
+        box.append(self.button("RECEIVED POKÉMON", self.show_sv_received))
+        self.win.set_child(box)
+
+    def show_sv_trade(self, *_):
+        self.showdown_editor("SCARLET / VIOLET • LINK TRADE", "sv", self.host_sv_trade, self.show_sv)
+
+    def host_sv_trade(self, button, view):
+        if not self._bank_editable() or not self._host_prerequisites(["--keys", self._bank_config["prod_keys"]]):
+            return
+        text = text_of(view)
+        if not text:
+            self.set_status("Add or paste at least one Scarlet / Violet Pokemon first.")
+            return
+        try:
+            infos = self.showdown_files("sv", text)
+            if not 1 <= len(infos) <= 6:
+                raise ValueError("Choose one to six Pokemon for this trade session.")
+        except ValueError as exc:
+            self.set_status(f"Build failed: {exc}")
+            return
+        origin = getattr(self, "_current_page_title", "")
+
+        def ready(result):
+            if getattr(self, "_current_page_title", "") != origin:
+                self.set_status("Scarlet / Violet trade cancelled after leaving the builder. Return to Link Trade to start again.")
+                return
+            self.launch(result["cmd"], f"Scarlet / Violet hosting {len(result['offers'])} offer(s)",
+                        bank_game="sv", offers=result["offers"])
+
+        started = self._bank_action("trade_prepare", {"game": "sv", "config": self._bank_config,
+            "offers": infos}, ready, on_error=lambda error: self.set_status(f"Scarlet / Violet: {error}"))
+        if started and self._bank_busy:
+            self.set_status("Preparing Scarlet / Violet link trade. On the Switch: Poke Portal, Link Trade, offline, no code.")
+
+    def show_sv_received(self, *_):
+        box = self.page("SCARLET / VIOLET • RECEIVED", self.show_sv)
+        paths = sorted((APP_DIR / "received-bank").glob("*.pk9"), key=lambda p: p.stat().st_mtime, reverse=True)
+        sc = self.touch_scrolled_window()
+        sc.set_vexpand(True)
+        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        for path in paths[:50]:
+            col.append(Gtk.Label(label=path.name, xalign=0))
+        if not paths:
+            col.append(Gtk.Label(label="No received Scarlet / Violet Pokemon saved yet."))
+        sc.set_child(col)
+        box.append(sc)
+        self.win.set_child(box)
+
     # ---------- Brilliant Diamond / Shining Pearl ----------
 
     def show_bdsp(self, *_):
@@ -1374,6 +1439,7 @@ class TradeBox(BankUI, Gtk.Application):
         box.append(hint)
 
         box.append(self.button("LINK TRADE", self.show_bdsp_trade))
+        box.append(self.button("MYSTERY GIFT - SIMULATED", lambda *_: self.show_simulated_gifts("bdsp")))
         box.append(self.button("RECEIVED POKÉMON", self.show_bdsp_received))
         self.win.set_child(box)
 
@@ -3565,6 +3631,7 @@ class TradeBox(BankUI, Gtk.Application):
             ("swsh", "Sword / Shield"),
             ("bdsp", "Brilliant Diamond / Shining Pearl"),
             ("za", "Legends Z-A"),
+            ("sv", "Scarlet / Violet"),
         ]
         counts = self.startup_report.species if self.startup_report is not None else {}
         rows = [(label, f"{counts[game]} species" if game in counts else "Not checked")
@@ -3635,6 +3702,8 @@ class TradeBox(BankUI, Gtk.Application):
                 "Configured trainers\n\n"
                 f"Z-A\n{TRAINERS['za']['ot']} • raw TID {TRAINERS['za']['tid']} / "
                 f"SID {TRAINERS['za']['sid']}\n\n"
+                f"Scarlet / Violet\n{TRAINERS['sv']['ot']} • raw TID {TRAINERS['sv']['tid']} / "
+                f"SID {TRAINERS['sv']['sid']}\n\n"
                 f"Sword / Shield\n{TRAINERS['swsh']['ot']} • raw TID "
                 f"{TRAINERS['swsh']['tid']} / SID {TRAINERS['swsh']['sid']}\n\n"
                 f"Brilliant Diamond / Shining Pearl\n{TRAINERS['bdsp']['ot']} • raw TID "

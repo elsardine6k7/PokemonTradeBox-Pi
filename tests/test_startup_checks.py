@@ -16,7 +16,7 @@ from startup_checks import (
 )
 
 
-def fake_backend(repo, *, version="0.23.0", api=(1, 3), service=None):
+def fake_backend(repo, *, version="0.23.0", api=(1, 3), service=None, simulated_gifts=False):
     """A standalone fake Program Surface for real child-process checks."""
     repo.mkdir(parents=True, exist_ok=True)
     for name in SURFACE:
@@ -52,6 +52,19 @@ def fake_backend(repo, *, version="0.23.0", api=(1, 3), service=None):
     (repo / "gui" / "__init__.py").touch()
     (repo / "gui" / "board.py").write_text(
         "\n".join(f"def {name}(*a, **kw): pass" for name in BOARD_SURFACE), encoding="utf-8")
+    if simulated_gifts:
+        with (repo / "pokeldn/pokemon.py").open("a", encoding="utf-8") as fh:
+            fh.write("\ndef gift_events(game, trainer): return []\n"
+                     "def gift_event(game, key, trainer, version='', keep=True): return {}\n"
+                     "SERVICE.gift_events = gift_events\nSERVICE.gift_event = gift_event\n")
+        app = repo / "pokeldn/app"
+        app.mkdir(exist_ok=True)
+        (app / "__init__.py").touch()
+        (app / "catalog.py").write_text(
+            "from types import SimpleNamespace as Item\n"
+            "GAMES = tuple(Item(key=game, tools=(Item(key=f'{game}-gift-host', "
+            "fields=(Item(events=True),)),)) for game in ('za', 'sv', 'bdsp'))\n",
+            encoding="utf-8")
     python = repo / ".venv" / "bin" / "python"
     python.parent.mkdir(parents=True, exist_ok=True)
     if os.name == "posix":
@@ -108,6 +121,33 @@ class StartupChecksTests(unittest.TestCase):
         self.assertEqual(DEFAULT_CONFIG["trainers"]["swsh"]["ot"], "PLAYER")
         with patch.dict(os.environ, {"POKEMON_TRADEBOX_CONFIG": str(self.path)}):
             self.assertEqual(config_path(self.root / "elsewhere"), self.path)
+
+    def test_legacy_sv_trainer_copies_configured_za_in_memory_without_rewriting_config(self):
+        self.cfg["trainers"].pop("sv")
+        self.cfg["trainers"]["za"].update(ot="RICK", tid=12345, sid=54321, language=10, gender=1)
+        self.write_config()
+        before = self.path.read_bytes()
+        cfg = load_config(self.path)
+        self.assertEqual(cfg["trainers"]["sv"], self.cfg["trainers"]["za"])
+        self.assertIsNot(cfg["trainers"]["sv"], cfg["trainers"]["za"])
+        cfg["trainers"]["sv"]["ot"] = "SCARLET"
+        self.assertEqual(cfg["trainers"]["za"]["ot"], "RICK")
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(DEFAULT_CONFIG["trainers"]["sv"]["ot"], "PLAYER")
+
+    def test_explicit_sv_trainer_is_validated_and_keeps_its_own_identity(self):
+        self.cfg["trainers"]["sv"].update(ot="SCARLET", tid=65535, sid=123, language=10, gender=1)
+        self.cfg["trainers"]["za"]["ot"] = "ZA"
+        self.write_config()
+        self.assertEqual(load_config(self.path)["trainers"]["sv"], self.cfg["trainers"]["sv"])
+        for key, value in (("tid", 65536), ("sid", -1), ("tid", True),
+                           ("language", 6), ("gender", 2), ("ot", "")):
+            with self.subTest(key=key, value=value):
+                cfg = copy.deepcopy(self.cfg)
+                cfg["trainers"]["sv"][key] = value
+                self.path.write_text(json.dumps(cfg), encoding="utf-8")
+                with self.assertRaisesRegex(ConfigError, f"trainers.sv.{key}"):
+                    load_config(self.path)
 
     def test_invalid_radio_and_game_selection_are_config_errors(self):
         for key, value in (("radio", "esp32:"), ("radio", "wifi:auto"),
@@ -177,7 +217,7 @@ class StartupChecksTests(unittest.TestCase):
                 result = run_probe(Path(sys.executable), repo, pkhex=True)
                 self.assertEqual(result["ok"], ok, result)
                 if ok:
-                    self.assertEqual(result["species"], {game: 1 for game in DEFAULT_CONFIG["trainers"]})
+                    self.assertEqual(result["species"], {game: 1 for game in ("frlg", "swsh", "bdsp", "za")})
 
     def test_broken_pkhex_is_fatal_but_missing_flash_tools_is_only_a_warning(self):
         repo = Path(self.cfg["pokeldn_repo"])
@@ -213,6 +253,82 @@ class StartupChecksTests(unittest.TestCase):
         supported = run_probe(Path(sys.executable), repo, pkhex=True)
         self.assertTrue(supported["ok"])
         self.assertTrue(supported["bank_ready"])
+
+    def test_simulated_gifts_are_optional_and_detected_by_capability(self):
+        repo = Path(self.cfg["pokeldn_repo"])
+        fake_backend(repo, version="0.29.1", api=(1, 8))
+        missing = run_probe(Path(sys.executable), repo, pkhex=True)
+        self.assertTrue(missing["ok"], missing)
+        self.assertFalse(missing["simulated_gifts_ready"])
+        self.assertIn("gift_events", missing["simulated_gifts_warning"])
+        self.assertNotIn("sv", missing["species"])
+        # Feature detection also accepts a compatible backport; no release or
+        # API-level comparison can substitute for these actual capabilities.
+        repo = self.root / "compatible-backport"
+        fake_backend(repo, version="0.23.0", api=(1, 3), simulated_gifts=True)
+        supported = run_probe(Path(sys.executable), repo, pkhex=True)
+        self.assertTrue(supported["ok"], supported)
+        self.assertTrue(supported["simulated_gifts_ready"])
+        self.assertEqual(supported["species"]["sv"], 1)
+        frontend = run_probe(Path(sys.executable), repo, pkhex=False)
+        self.assertTrue(frontend["ok"], frontend)
+        self.assertFalse(frontend["simulated_gifts_ready"])
+
+    def test_missing_gift_tool_or_service_method_disables_only_simulated_gifts(self):
+        for failure in ("catalog", "service"):
+            with self.subTest(failure=failure):
+                repo = self.root / failure
+                fake_backend(repo, simulated_gifts=True)
+                if failure == "catalog":
+                    path = repo / "pokeldn/app/catalog.py"
+                    with path.open("a", encoding="utf-8") as fh:
+                        fh.write("\nGAMES = tuple(game for game in GAMES if game.key != 'sv')\n")
+                    detail = "sv-gift-host"
+                else:
+                    path = repo / "pokeldn/pokemon.py"
+                    with path.open("a", encoding="utf-8") as fh:
+                        fh.write("\nSERVICE.gift_event = None\n")
+                    detail = "SERVICE.gift_event"
+                result = run_probe(Path(sys.executable), repo, pkhex=True)
+                self.assertTrue(result["ok"], result)
+                self.assertFalse(result["simulated_gifts_ready"])
+                self.assertIn(detail, result["simulated_gifts_warning"])
+
+    def test_empty_sv_catalog_keeps_existing_games_available(self):
+        repo = Path(self.cfg["pokeldn_repo"])
+        service = ("class Service:\n"
+                   "    def species(self, game): return [] if game == 'sv' else [game]\n"
+                   "    names = options = make = paste = check = species\n"
+                   "SERVICE = Service()")
+        fake_backend(repo, service=service, simulated_gifts=True)
+        result = run_probe(Path(sys.executable), repo, pkhex=True)
+        self.assertTrue(result["ok"], result)
+        self.assertFalse(result["simulated_gifts_ready"])
+        self.assertIn("Scarlet/Violet species catalog", result["simulated_gifts_warning"])
+        self.assertEqual(set(result["species"]), {"frlg", "swsh", "bdsp", "za"})
+
+    def test_startup_exposes_simulated_gift_readiness_and_optional_warning(self):
+        repo = Path(self.cfg["pokeldn_repo"])
+        fake_backend(repo)
+        before = self.path.read_bytes()
+        for ready in (False, True):
+            with self.subTest(ready=ready):
+                def runner(_python, _repo, *, pkhex):
+                    result = {"ok": True, "version": "0.29.1", "api": "1.8",
+                              "serial_ready": True, "simulated_gifts_ready": ready}
+                    if pkhex and not ready:
+                        result["simulated_gifts_warning"] = "Missing sv-gift-host; update PokeLDN."
+                    return result
+                with patch("startup_checks.find_radio", return_value=None):
+                    report = check_startup(self.path, self.root, runner=runner)
+                self.assertTrue(report.ready)
+                self.assertEqual(report.simulated_gifts_ready, ready)
+                warning = [check for check in report.checks if check.label == "Mystery Gift - Simulated"]
+                self.assertEqual(len(warning), 0 if ready else 1)
+                if warning:
+                    self.assertEqual(warning[0].state, "warning")
+                    self.assertIn("sv-gift-host", warning[0].detail)
+                self.assertEqual(self.path.read_bytes(), before)
 
     def test_frontend_does_not_require_full_catalog_dependencies_but_backend_still_checks_api(self):
         repo = Path(self.cfg["pokeldn_repo"])
@@ -265,7 +381,7 @@ class StartupChecksTests(unittest.TestCase):
         source = Path(__file__).resolve().parents[1]
         for name in ("install.sh", "startup_checks.py", "config.example.json", "tradebox.py",
                      "session_control.py", "esp32_manager.py", "start-tradebox.sh",
-                     "bank_backend.py", "bank_client.py", "bank_ui.py"):
+                     "bank_backend.py", "bank_client.py", "bank_ui.py", "simulated_gifts.py"):
             shutil.copyfile(source / name, app / name)
         env = dict(os.environ, POKEMON_TRADEBOX_CONFIG=str(self.path), HOME=str(self.root / "unrelated-home"))
         result = subprocess.run(["bash", str(app / "install.sh")], cwd=self.root, env=env,

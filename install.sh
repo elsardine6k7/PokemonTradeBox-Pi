@@ -11,7 +11,7 @@ if [[ ! -e "$CONFIG_PATH" ]]; then
   echo "Created $CONFIG_PATH"
 fi
 chmod +x "$APP_DIR/tradebox.py" "$APP_DIR/start-tradebox.sh" "$APP_DIR/esp32_manager.py"
-python3 -m py_compile "$APP_DIR/tradebox.py" "$APP_DIR/esp32_manager.py" "$APP_DIR/session_control.py" "$APP_DIR/startup_checks.py" "$APP_DIR/bank_backend.py" "$APP_DIR/bank_client.py" "$APP_DIR/bank_ui.py"
+python3 -m py_compile "$APP_DIR/tradebox.py" "$APP_DIR/esp32_manager.py" "$APP_DIR/session_control.py" "$APP_DIR/startup_checks.py" "$APP_DIR/bank_backend.py" "$APP_DIR/bank_client.py" "$APP_DIR/bank_ui.py" "$APP_DIR/simulated_gifts.py"
 python3 "$APP_DIR/startup_checks.py" --config "$CONFIG_PATH" --frontend-python /usr/bin/python3
 if [[ "$AUTOSTART" -eq 1 ]]; then
   mkdir -p "$HOME/.config/labwc"

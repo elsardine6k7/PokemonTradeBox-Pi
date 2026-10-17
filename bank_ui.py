@@ -61,7 +61,7 @@ class BankUI:
             return False
         return True
 
-    def _bank_action(self, action, payload, callback, *, timeout=60):
+    def _bank_action(self, action, payload, callback, *, timeout=60, on_error=None):
         if not self._bank_available or not self._bank_editable():
             return False
         origin = getattr(self, "_current_page_title", "")
@@ -73,6 +73,9 @@ class BankUI:
             self._bank_busy = False
             self._bank_cancel_allowed = False
             if error:
+                if on_error is not None:
+                    on_error(error)
+                    return False
                 self.set_status(f"Bank: {error}")
                 title = getattr(self, "_current_page_title", "")
                 if title == "BANK BROWSER":
@@ -533,6 +536,7 @@ class BankUI:
                 self._bank_run = {"token": token, "queue": [], "offers": offers,
                     "cmd": result["cmd"], "proc": None, "state": "starting", "completed": 0,
                     "progress_pending": False, "error": "", "regular": True, "label": label}
+                self._bank_run["game"] = game
                 self._bank_spawn(self._bank_run)
             self._finish_radio_operation()
             return False
@@ -581,6 +585,9 @@ class BankUI:
             return
         previous = run["completed"]
         previous_received = run.get("received_count", 0)
+        notices = result.get("notices", [])
+        new_notice = bool(notices) and notices != run.get("notices", [])
+        run["notices"] = notices
         run["completed"] = max(previous, result["completed"])
         count = min(run["completed"], len(run["queue"]))
         if not run.get("regular"):
@@ -599,6 +606,13 @@ class BankUI:
                 self.set_status(f"{run['completed']} confirmed trade(s); {run['received_count']} received Pokemon added to Bank.")
         if run["completed"] != previous or run["received_count"] != previous_received:
             self._bank_refresh_controls()
+        if new_notice and any(offer.get("event") for offer in run["offers"]):
+            state = getattr(self, "_gift_states", {}).get(run.get("game"))
+            if state is not None:
+                state["notices"] = notices
+                if (self._gift_visible(run["game"]) and getattr(self, "_current_page_title", "").startswith("GIFT QUEUE •")):
+                    self.show_simulated_gift_queue(run["game"])
+            self.set_status("Gift delivery has a notice. Open the game's gift queue for details; keep the host running until the Switch saves and leaves trading.")
 
     def _bank_refresh_controls(self):
         title = getattr(self, "_current_page_title", "")
